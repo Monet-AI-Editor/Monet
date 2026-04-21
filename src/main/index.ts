@@ -410,10 +410,27 @@ async function resolveBinaryOnPath(binaryName: string): Promise<string | null> {
   return null
 }
 
-function buildAgentWrapperScript(binaryPath: string, startupPrompt: string): string {
+function buildAgentWrapperScript(binaryName: string, binaryPath: string, startupPrompt: string): string {
   const escapedBinaryPath = binaryPath.replace(/"/g, '\\"')
   const escapedPrompt = startupPrompt.replace(/"/g, '\\"')
-  return `#!/bin/sh\nif [ "$#" -eq 0 ]; then\n  exec "${escapedBinaryPath}" "${escapedPrompt}"\nelse\n  exec "${escapedBinaryPath}" "$@"\nfi\n`
+
+  if (binaryName === 'claude') {
+    return `#!/bin/sh
+if [ "$#" -eq 0 ]; then
+  exec "${escapedBinaryPath}" --append-system-prompt "${escapedPrompt}"
+else
+  exec "${escapedBinaryPath}" "$@"
+fi
+`
+  }
+
+  return `#!/bin/sh
+if [ "$#" -eq 0 ]; then
+  exec "${escapedBinaryPath}" "${escapedPrompt}"
+else
+  exec "${escapedBinaryPath}" "$@"
+fi
+`
 }
 
 async function ensureEditorctlShim(): Promise<{ shimPath: string | null; binDir: string }> {
@@ -443,13 +460,13 @@ exit 1
   await chmod(shimPath, 0o755)
 
   const startupPrompt =
-    'You are inside Monet, an AI-first video editor. Read ./MONET_AGENT_CONTEXT.md first. Then inspect the live editor state with editorctl get-state and editorctl list-assets before answering the user.'
+    'You are inside Monet, an AI-first video editor. Read ./MONET_AGENT_CONTEXT.md first. For any question about the current project, assets, screenshots, images, timeline, or "the app", inspect Monet live state before answering. Start with editorctl get-state and editorctl list-assets. Do not begin by searching the surrounding filesystem unless the user explicitly asks about files on disk outside Monet.'
 
   for (const binaryName of ['claude', 'codex']) {
     const binaryPath = await resolveBinaryOnPath(binaryName)
     if (!binaryPath) continue
     const wrapperPath = join(binDir, binaryName)
-    await writeFile(wrapperPath, buildAgentWrapperScript(binaryPath, startupPrompt), 'utf8')
+    await writeFile(wrapperPath, buildAgentWrapperScript(binaryName, binaryPath, startupPrompt), 'utf8')
     await chmod(wrapperPath, 0o755)
   }
 

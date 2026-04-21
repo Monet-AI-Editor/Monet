@@ -84,7 +84,7 @@ curl -s http://localhost:51847/state
 
 ## If the user asks about "the app"
 
-Interpret that as Monet's live editor state first, not the surrounding filesystem. Use \`editorctl\` or the API bridge before searching the current working directory for unrelated files.
+Interpret that as Monet's live editor state first, not the surrounding filesystem. Questions about screenshots, images, assets, clips, or "what is in the app" should start with \`editorctl\` or the API bridge, not a filesystem search in the current working directory.
 Before acting on any new request, refresh your understanding with live state commands if there is any chance the project changed.
 
 ## Key commands
