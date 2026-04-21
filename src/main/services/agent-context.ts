@@ -79,6 +79,7 @@ editorctl help
 editorctl get-state
 editorctl list-assets
 editorctl list-sequences
+curl -s http://localhost:51847/state
 \`\`\`
 
 ## If the user asks about "the app"
@@ -109,6 +110,12 @@ Before acting on any new request, refresh your understanding with live state com
 - \`editorctl extract-frames <assetId> [count]\`
 - \`editorctl contact-sheet <assetId> [count]\`
 - \`editorctl export /absolute/output/path.mp4 [quality] [resolution] [format]\`
+
+## API bridge examples
+
+- \`curl -s http://localhost:51847/state\`
+- \`curl -s http://localhost:51847/assets\`
+- \`curl -s -X POST http://localhost:51847 -H "Content-Type: application/json" -d '{"command":"list-assets"}'\`
 
 ## Editing rules
 

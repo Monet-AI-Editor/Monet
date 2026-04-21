@@ -47,6 +47,34 @@ export class APIBridge {
 
       if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
 
+      if (req.method === 'GET') {
+        try {
+          const path = typeof req.url === 'string' ? req.url.split('?')[0] : '/'
+          const command =
+            path === '/' ? 'help'
+            : path === '/state' ? 'get_control_state'
+            : path === '/assets' ? 'list_assets'
+            : path === '/sequences' ? 'list_sequences'
+            : path === '/help' ? 'help'
+            : null
+
+          if (!command) {
+            res.writeHead(404, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: false, error: `Unknown endpoint: ${path}` }))
+            return
+          }
+
+          const result = await this.handleCommand(command, {})
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ success: true, result }))
+          return
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ success: false, error: error instanceof Error ? error.message : String(error) }))
+          return
+        }
+      }
+
       let body = ''
       req.on('data', (chunk: Buffer) => { body += chunk.toString() })
       req.on('end', async () => {
@@ -245,7 +273,49 @@ export class APIBridge {
   }
 
   private async handleCommand(command: string, args: any = {}): Promise<any> {
-    switch (command) {
+    const normalizedCommand =
+      command === 'get-state' ? 'get_control_state'
+      : command === 'list-assets' ? 'list_assets'
+      : command === 'list-sequences' ? 'list_sequences'
+      : command === 'list-tracks' ? 'get_tracks'
+      : command === 'list-clips' ? 'list_clips'
+      : command === 'list-markers' ? 'list_markers'
+      : command === 'add-clip' ? 'add_clip'
+      : command === 'split-clip' ? 'split_clip'
+      : command === 'move-clip' ? 'move_clip'
+      : command === 'trim-clip' ? 'trim_clip'
+      : command === 'remove-clip' ? 'remove_clip'
+      : command === 'add-track' ? 'add_track'
+      : command === 'activate-sequence' ? 'activate_sequence'
+      : command === 'add-marker' ? 'add_marker'
+      : command === 'remove-marker' ? 'remove_marker'
+      : command === 'set-playhead' ? 'set_playhead'
+      : command === 'select-clip' ? 'select_clip'
+      : command === 'select-asset' ? 'select_asset'
+      : command === 'duplicate-clip' ? 'duplicate_clip'
+      : command === 'rename-clip' ? 'update_clip_label'
+      : command === 'set-transition' ? 'set_transition'
+      : command === 'add-effect' ? 'add_effect'
+      : command === 'remove-effect' ? 'remove_effect'
+      : command === 'list-effects' ? 'list_effects'
+      : command === 'set-speed' ? 'set_speed'
+      : command === 'set-volume' ? 'set_volume'
+      : command === 'set-effect-keyframes' ? 'set_effect_keyframes'
+      : command === 'ripple-delete-clip' ? 'ripple_delete_clip'
+      : command === 'ripple-insert-gap' ? 'ripple_insert_gap'
+      : command === 'import-files' ? 'import_files'
+      : command === 'transcribe-asset' ? 'transcribe_asset'
+      : command === 'embed-assets' ? 'embed_assets'
+      : command === 'search-media' ? 'search_media'
+      : command === 'search-spoken' ? 'search_spoken'
+      : command === 'get-asset-segments' ? 'get_asset_segments'
+      : command === 'search-segments' ? 'search_segments'
+      : command === 'extract-frames' ? 'extract_frames'
+      : command === 'create-contact-sheet' ? 'create_contact_sheet'
+      : command === 'export-sequence' ? 'export_sequence'
+      : command
+
+    switch (normalizedCommand) {
 
       // ── Meta ──────────────────────────────────────────────────────────────
       case 'ping':

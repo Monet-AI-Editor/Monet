@@ -20,7 +20,8 @@
       "README.md"
     ],
     "asarUnpack": [
-      "node_modules/node-pty/**/*"
+      "node_modules/node-pty/**/*",
+      "out/cli/**/*"
     ],
     "mac": {
       "category": "public.app-category.video",
