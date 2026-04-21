@@ -8,11 +8,10 @@ const API_PORT = 51847
 
 async function checkLiveApp(): Promise<boolean> {
   try {
-    const response = await fetch(`http://localhost:${API_PORT}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: 'ping' })
+    const response = await fetch(`http://localhost:${API_PORT}/help`, {
+      method: 'GET'
     })
+    if (!response.ok) return false
     const data = await response.json()
     return data.success === true
   } catch {
