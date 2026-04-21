@@ -19,13 +19,6 @@
   </a>
 </p>
 
-<p align="center">
-  <img src="./resources/ai_demo.png" alt="Monet app overview" width="900" />
-</p>
-
-<p align="center">
-  <img src="./resources/timeline.png" alt="Monet timeline view" width="900" />
-</p>
 
 ## What Monet Is
 
