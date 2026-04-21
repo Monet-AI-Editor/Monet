@@ -1,0 +1,90 @@
+{
+  "name": "monet",
+  "productName": "Monet",
+  "version": "0.1.0",
+  "author": "Het Patel",
+  "description": "Electron video editor with terminal-first controls, transcription, embeddings, and export",
+  "build": {
+    "productName": "Monet",
+    "appId": "com.monet.editor",
+    "artifactName": "${productName}-macOS-${arch}.${ext}",
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*",
+      "scripts/**/*",
+      "package.json",
+      "README.md"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
+  },
+  "type": "module",
+  "main": "out/main/index.js",
+  "bin": {
+    "editorctl": "./out/cli/editorctl.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/fix-node-pty-perms.mjs",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build && npm run build:cli && npm run build:mcp",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "preview": "electron-vite preview",
+    "electron:dev": "electron-vite dev",
+    "setup:local-transcription": "node scripts/setup-local-transcription.mjs",
+    "typecheck": "tsc --noEmit",
+    "build:cli": "tsc src/cli/editorctl.ts --outDir out/cli --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck",
+    "build:mcp": "tsc src/mcp-server/index.ts --outDir out/mcp-server --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.69",
+    "@ai-sdk/google": "^3.0.62",
+    "@ai-sdk/openai": "^3.0.52",
+    "@aptabase/electron": "^0.3.1",
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/tsconfig": "^2.0.0",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@sentry/electron": "^7.11.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "ai": "^6.0.158",
+    "clsx": "^2.1.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "lucide-react": "^0.462.0",
+    "node-pty": "^1.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "electron": "^33.2.0",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^2.3.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

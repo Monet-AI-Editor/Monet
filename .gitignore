@@ -1,0 +1,14 @@
+node_modules
+out
+.DS_Store
+dist
+*.log
+npm-debug.log*
+.vite
+.python-runtime
+release
+tmp
+build/icon.iconset
+.env
+.env.local
+.env.*.local

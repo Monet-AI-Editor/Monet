@@ -1,0 +1,87 @@
+{
+  "id": "proj_demo",
+  "name": "Demo Project",
+  "createdAt": 1713312000000,
+  "updatedAt": 1713312000000,
+  "assets": [
+    {
+      "id": "asset_demo_1",
+      "name": "sample-video.mp4",
+      "path": "/path/to/sample-video.mp4",
+      "type": "video",
+      "duration": 30.5,
+      "createdAt": 1713312000000,
+      "updatedAt": 1713312000000,
+      "semantic": {
+        "summary": "Demo video asset",
+        "tags": [
+          "video",
+          "demo"
+        ],
+        "keywords": [
+          "sample",
+          "video",
+          "demo"
+        ],
+        "transcript": [],
+        "confidence": 0.05
+      }
+    }
+  ],
+  "sequences": [
+    {
+      "id": "seq_main",
+      "name": "Main Sequence",
+      "duration": 15,
+      "active": true,
+      "tracks": [
+        {
+          "id": "track_video_0",
+          "name": "V1",
+          "kind": "video",
+          "clips": [
+            {
+              "id": "clip_demo_001",
+              "assetId": "asset_demo_1",
+              "trackId": "track_video_0",
+              "startTime": 0,
+              "duration": 10,
+              "inPoint": 2.5,
+              "label": "sample-video.mp4",
+              "effects": [
+                {
+                  "id": "effect_1776371664011",
+                  "type": "fade_in",
+                  "enabled": true,
+                  "parameters": {
+                    "duration": 2
+                  }
+                },
+                {
+                  "id": "effect_1776371673788",
+                  "type": "color_grade",
+                  "enabled": true,
+                  "parameters": {
+                    "brightness": 0.1,
+                    "contrast": 1.2,
+                    "saturation": 1.1
+                  }
+                }
+              ],
+              "speed": 0.8,
+              "volume": 1.2
+            }
+          ]
+        },
+        {
+          "id": "track_audio_0",
+          "name": "A1",
+          "kind": "audio",
+          "clips": []
+        }
+      ]
+    }
+  ],
+  "tasks": [],
+  "toolHistory": []
+}

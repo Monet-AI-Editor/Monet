@@ -1,0 +1,856 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize2, Scissors } from 'lucide-react'
+import clsx from 'clsx'
+import type { EditorState, EditorActions } from '../store/useEditorStore'
+import type { MediaAsset, TimelineClip } from '../types'
+
+type Props = Pick<EditorState, 'isPlaying' | 'playheadTime' | 'totalDuration' | 'selectedClipId' | 'selectedAssetId' | 'assets' | 'tracks'> &
+  Pick<EditorActions, 'setIsPlaying' | 'setPlayheadTime' | 'splitSelectedClip'>
+
+function formatTimecode(s: number): string {
+  const m = Math.floor(s / 60)
+  const sec = Math.floor(s % 60)
+  const frames = Math.floor((s % 1) * 24)
+  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}:${String(frames).padStart(2, '0')}`
+}
+
+function applyEasing(progress: number, easing?: 'linear' | 'ease_in' | 'ease_out' | 'ease_in_out'): number {
+  const t = Math.max(0, Math.min(1, progress))
+  switch (easing) {
+    case 'ease_in':
+      return t * t
+    case 'ease_out':
+      return 1 - (1 - t) * (1 - t)
+    case 'ease_in_out':
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+    default:
+      return t
+  }
+}
+
+function resolveEffectParameters(
+  effect: { parameters: Record<string, number | string | boolean>; keyframes?: Array<{ time: number; easing?: 'linear' | 'ease_in' | 'ease_out' | 'ease_in_out'; parameters: Record<string, number | string | boolean> }> } | undefined,
+  time: number
+): Record<string, number | string | boolean> {
+  if (!effect) return {}
+
+  const resolved: Record<string, number | string | boolean> = { ...effect.parameters }
+  const keyframes = [...(effect.keyframes ?? [])].sort((left, right) => left.time - right.time)
+  if (keyframes.length === 0) return resolved
+
+  const keys = new Set<string>([
+    ...Object.keys(effect.parameters ?? {}),
+    ...keyframes.flatMap((keyframe) => Object.keys(keyframe.parameters ?? {}))
+  ])
+
+  for (const key of keys) {
+    const previous = [...keyframes].reverse().find((keyframe) => key in keyframe.parameters && keyframe.time <= time)
+    const next = keyframes.find((keyframe) => key in keyframe.parameters && keyframe.time >= time)
+
+    if (!previous && !next) continue
+    if (!previous) {
+      resolved[key] = next!.parameters[key]
+      continue
+    }
+    if (!next || previous === next) {
+      resolved[key] = previous.parameters[key]
+      continue
+    }
+
+    const previousValue = previous.parameters[key]
+    const nextValue = next.parameters[key]
+    if (typeof previousValue === 'number' && typeof nextValue === 'number') {
+      const span = Math.max(0.0001, next.time - previous.time)
+      const progress = applyEasing((time - previous.time) / span, next.easing ?? previous.easing)
+      resolved[key] = previousValue + (nextValue - previousValue) * progress
+    } else {
+      resolved[key] = time - previous.time < next.time - time ? previousValue : nextValue
+    }
+  }
+
+  return resolved
+}
+
+type ActivePreviewLayer = {
+  clip: TimelineClip
+  asset: MediaAsset
+  clipLocalTime: number
+  videoFileTime: number
+}
+
+function PreviewLayer({
+  layer,
+  assetUrl,
+  muted,
+  audioMuted,
+  onTogglePlay,
+  registerVideoRef
+}: {
+  layer: ActivePreviewLayer
+  assetUrl: string | null
+  muted: boolean
+  audioMuted: boolean
+  onTogglePlay: () => void
+  registerVideoRef: (clipId: string, node: HTMLVideoElement | null) => void
+}) {
+  const effects = layer.clip.effects ?? []
+  const fadeIn = effects.find((effect) => effect.type === 'fade_in' && effect.enabled)
+  const fadeOut = effects.find((effect) => effect.type === 'fade_out' && effect.enabled)
+  const grade = effects.find((effect) => effect.type === 'color_grade' && effect.enabled)
+  const blurEffect = effects.find((effect) => effect.type === 'blur' && effect.enabled)
+  const sharpenEffect = effects.find((effect) => effect.type === 'sharpen' && effect.enabled)
+  const transformEffect = effects.find((effect) => effect.type === 'transform' && effect.enabled)
+  const opacityEffect = effects.find((effect) => effect.type === 'opacity' && effect.enabled)
+  const blendModeEffect = effects.find((effect) => effect.type === 'blend_mode' && effect.enabled)
+  const textOverlayEffect = effects.find((effect) => effect.type === 'text_overlay' && effect.enabled)
+  const maskBoxEffect = effects.find((effect) => effect.type === 'mask_box' && effect.enabled)
+
+  let videoOpacity = 1
+  if (fadeIn) {
+    const duration = Number(fadeIn.parameters.duration ?? 1)
+    if (layer.clipLocalTime < duration) videoOpacity = Math.max(0, layer.clipLocalTime / duration)
+  }
+  if (fadeOut) {
+    const duration = Number(fadeOut.parameters.duration ?? 1)
+    const fadeStart = layer.clip.duration - duration
+    if (layer.clipLocalTime > fadeStart) {
+      videoOpacity = Math.min(videoOpacity, Math.max(0, 1 - (layer.clipLocalTime - fadeStart) / duration))
+    }
+  }
+
+  const filterParts: string[] = []
+  if (grade) {
+    const brightness = 1 + (Number(grade.parameters.brightness ?? 0))
+    const contrast = Number(grade.parameters.contrast ?? 1)
+    const saturation = Number(grade.parameters.saturation ?? 1)
+    filterParts.push(`brightness(${brightness}) contrast(${contrast}) saturate(${saturation})`)
+  }
+  if (blurEffect) filterParts.push(`blur(${Math.round(Number(blurEffect.parameters.radius ?? 5) * 0.6)}px)`)
+  if (sharpenEffect) filterParts.push(`contrast(${1 + Number(sharpenEffect.parameters.amount ?? 1) * 0.08})`)
+
+  const resolvedTransform = resolveEffectParameters(transformEffect, layer.clipLocalTime)
+  const resolvedOpacity = resolveEffectParameters(opacityEffect, layer.clipLocalTime)
+  const resolvedBlendMode = resolveEffectParameters(blendModeEffect, layer.clipLocalTime)
+  const resolvedTextOverlay = resolveEffectParameters(textOverlayEffect, layer.clipLocalTime)
+  const transformX = Number(resolvedTransform.x ?? 0)
+  const transformY = Number(resolvedTransform.y ?? 0)
+  const scaleX = Number(resolvedTransform.scaleX ?? resolvedTransform.scale ?? 1)
+  const scaleY = Number(resolvedTransform.scaleY ?? resolvedTransform.scale ?? 1)
+  const rotation = Number(resolvedTransform.rotation ?? 0)
+  const blendMode = String(resolvedBlendMode.mode ?? 'normal') as React.CSSProperties['mixBlendMode']
+  videoOpacity *= Math.max(0, Math.min(1, Number(resolvedOpacity.opacity ?? 1)))
+
+  const textOverlayText = String(resolvedTextOverlay.text ?? '').trim()
+  const textOverlayX = Number(resolvedTextOverlay.x ?? 0)
+  const textOverlayY = Number(resolvedTextOverlay.y ?? 0)
+  const textOverlayScale = Number(resolvedTextOverlay.scale ?? 1)
+  const textOverlayRotation = Number(resolvedTextOverlay.rotation ?? 0)
+  const textOverlayOpacity = Math.max(0, Math.min(1, Number(resolvedTextOverlay.opacity ?? 1)))
+  const textOverlayFontSize = Number(resolvedTextOverlay.fontSize ?? 56)
+
+  const clipPath = maskBoxEffect
+    ? `inset(${Math.max(0, Number(maskBoxEffect.parameters.y ?? 0))}px ${Math.max(0, 1280 - (Number(maskBoxEffect.parameters.x ?? 0) + Number(maskBoxEffect.parameters.width ?? 1280)))}px ${Math.max(0, 720 - (Number(maskBoxEffect.parameters.y ?? 0) + Number(maskBoxEffect.parameters.height ?? 720)))}px ${Math.max(0, Number(maskBoxEffect.parameters.x ?? 0))}px)`
+    : undefined
+
+  return (
+    <div
+      className="absolute inset-0 flex items-center justify-center"
+      style={{
+        opacity: videoOpacity,
+        filter: filterParts.join(' ') || undefined,
+        transform: `translate(${transformX}px, ${transformY}px) rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`,
+        mixBlendMode: blendMode,
+        transformOrigin: 'center center',
+        clipPath
+      }}
+    >
+      {layer.asset.type === 'video' && assetUrl ? (
+        <video
+          ref={(node) => registerVideoRef(layer.clip.id, node)}
+          src={assetUrl}
+          className="w-full h-full object-contain bg-transparent"
+          controls={false}
+          playsInline
+          muted={muted || audioMuted}
+          preload="auto"
+          onClick={onTogglePlay}
+        />
+      ) : layer.asset.type === 'image' && assetUrl ? (
+        <img src={assetUrl} alt={layer.asset.name} className="w-full h-full object-contain bg-transparent" />
+      ) : null}
+
+      {textOverlayText ? (
+        <div
+          className="absolute inset-0 pointer-events-none flex items-center justify-center text-white text-center px-8"
+          style={{
+            opacity: textOverlayOpacity,
+            transform: `translate(${textOverlayX}px, ${textOverlayY}px) rotate(${textOverlayRotation}deg) scale(${textOverlayScale})`,
+            transformOrigin: 'center center'
+          }}
+        >
+          <div
+            className="font-semibold tracking-tight drop-shadow-[0_6px_24px_rgba(0,0,0,0.55)]"
+            style={{ fontSize: `${textOverlayFontSize}px`, lineHeight: 1.05, maxWidth: '85%' }}
+          >
+            {textOverlayText}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export function PreviewMonitor({
+  isPlaying,
+  setIsPlaying,
+  playheadTime,
+  setPlayheadTime,
+  totalDuration,
+  selectedClipId,
+  selectedAssetId,
+  assets,
+  tracks,
+  splitSelectedClip
+}: Props) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const layerVideoRefs = useRef<Record<string, HTMLVideoElement | null>>({})
+  const rafRef = useRef<number | null>(null)
+  const [muted, setMuted] = useState(false)
+  const [resolvedPreviewPaths, setResolvedPreviewPaths] = useState<Record<string, { path: string; cacheKey: string }>>({})
+
+  const getPreviewCacheKey = (previewAsset: Pick<MediaAsset, 'path' | 'type'>) => `${previewAsset.type}:${previewAsset.path}`
+
+  const videoClips = useMemo(
+    () =>
+      tracks
+        .filter((track) => track.type === 'video')
+        .flatMap((track) => track.clips)
+        .sort((left, right) => left.startTime - right.startTime),
+    [tracks]
+  )
+  const audioClips = useMemo(
+    () =>
+      tracks
+        .filter((track) => track.type === 'audio')
+        .flatMap((track) => track.clips)
+        .sort((left, right) => left.startTime - right.startTime),
+    [tracks]
+  )
+  const previewClips = videoClips.length > 0 ? videoClips : audioClips
+  const selectedAsset = selectedAssetId ? assets.find((candidate) => candidate.id === selectedAssetId) ?? null : null
+
+  const selectedClip = previewClips.find((clip) => clip.id === selectedClipId) ?? null
+  const playheadClip =
+    previewClips.find((clip) => playheadTime >= clip.startTime && playheadTime <= clip.startTime + clip.duration) ?? null
+  const previewClip = playheadClip ?? selectedClip
+  const activeVideoLayers = useMemo(
+    () =>
+      tracks
+        .filter((track) => track.type === 'video')
+        .map((track, trackIndex) => {
+          const clip = track.clips.find((candidate) => playheadTime >= candidate.startTime && playheadTime <= candidate.startTime + candidate.duration)
+          if (!clip) return null
+          const asset = assets.find((candidate) => candidate.id === clip.assetId)
+          if (!asset) return null
+          const clipLocalTime = Math.max(0, Math.min(clip.duration, playheadTime - clip.startTime))
+          return {
+            clip,
+            asset,
+            clipLocalTime,
+            videoFileTime: clip.inPoint + clipLocalTime,
+            trackIndex
+          }
+        })
+        .filter((layer): layer is ActivePreviewLayer & { trackIndex: number } => Boolean(layer))
+        .sort((left, right) => left.trackIndex - right.trackIndex)
+        .map(({ trackIndex: _trackIndex, ...layer }) => layer),
+    [assets, playheadTime, tracks]
+  )
+  const timelineAsset = previewClip ? assets.find((candidate) => candidate.id === previewClip.assetId) : undefined
+  const shouldPreferSelectedAsset = Boolean(selectedAsset && selectedAsset.id !== timelineAsset?.id)
+  const renderedVideoLayers = shouldPreferSelectedAsset ? [] : activeVideoLayers
+  const asset = selectedAsset ?? timelineAsset ?? assets[0]
+
+  const previewAssets = useMemo(
+    () =>
+      [...new Map([
+        ...renderedVideoLayers
+          .filter((layer) => Boolean(layer.asset.path))
+          .map((layer) => [layer.asset.id, layer.asset] as const),
+        ...(asset?.path ? [[asset.id, asset] as const] : [])
+      ]).values()],
+    [renderedVideoLayers, asset]
+  )
+  const previewAssetKey = useMemo(
+    () => previewAssets.map((previewAsset) => getPreviewCacheKey(previewAsset)).join('|'),
+    [previewAssets]
+  )
+
+  const assetPreviewKey = asset ? getPreviewCacheKey(asset) : null
+  const assetUrl = assetPreviewKey && resolvedPreviewPaths[assetPreviewKey]
+    ? `${window.api.toFileUrl(resolvedPreviewPaths[assetPreviewKey].path)}&v=${encodeURIComponent(resolvedPreviewPaths[assetPreviewKey].cacheKey)}`
+    : null
+
+  useEffect(() => {
+    let cancelled = false
+    const missingPreviewAssets = previewAssets.filter((previewAsset) => !resolvedPreviewPaths[getPreviewCacheKey(previewAsset)])
+
+    if (previewAssets.length === 0) return
+
+    if (missingPreviewAssets.length === 0) return
+
+    for (const previewAsset of missingPreviewAssets) {
+      if (!previewAsset.path) continue
+      void window.api.getPreviewDescriptor(previewAsset.path, previewAsset.type).then((descriptor) => {
+        if (cancelled) return
+        setResolvedPreviewPaths((current) => ({
+          ...current,
+          [getPreviewCacheKey(previewAsset)]: descriptor
+        }))
+      }).catch(() => {
+        if (cancelled) return
+        setResolvedPreviewPaths((current) => ({
+          ...current,
+          [getPreviewCacheKey(previewAsset)]: { path: previewAsset.path, cacheKey: `${Date.now()}` }
+        }))
+      })
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [previewAssetKey])
+
+  // clipLocalTime : 0 → clip.duration  (within-clip position, drives scrub bar + effects)
+  // videoFileTime : inPoint → inPoint+duration  (source file position, drives video.currentTime)
+  const clipDuration = previewClip?.duration ?? asset?.duration ?? totalDuration ?? 0
+  const clipLocalTime = previewClip
+    ? Math.max(0, Math.min(previewClip.duration, playheadTime - previewClip.startTime))
+    : Math.max(0, playheadTime)
+  const videoFileTime = (previewClip?.inPoint ?? 0) + clipLocalTime
+  const progress = totalDuration > 0 ? Math.min(100, (playheadTime / totalDuration) * 100) : 0
+
+  // --- Live visual effects ---
+  const effects     = previewClip?.effects ?? []
+  const fadeIn      = effects.find((e) => e.type === 'fade_in'     && e.enabled)
+  const fadeOut     = effects.find((e) => e.type === 'fade_out'    && e.enabled)
+  const grade       = effects.find((e) => e.type === 'color_grade' && e.enabled)
+  const blurEffect  = effects.find((e) => e.type === 'blur'        && e.enabled)
+  const sharpEffect = effects.find((e) => e.type === 'sharpen'     && e.enabled)
+
+  let videoOpacity = 1
+  if (fadeIn) {
+    const dur = (fadeIn.parameters.duration as number) ?? 1
+    if (clipLocalTime < dur) videoOpacity = Math.max(0, clipLocalTime / dur)
+  }
+  if (fadeOut && previewClip) {
+    const dur = (fadeOut.parameters.duration as number) ?? 1
+    const fadeStart = previewClip.duration - dur
+    if (clipLocalTime > fadeStart)
+      videoOpacity = Math.min(videoOpacity, Math.max(0, 1 - (clipLocalTime - fadeStart) / dur))
+  }
+  const filterParts: string[] = []
+  if (grade) {
+    const b = 1 + ((grade.parameters.brightness as number) ?? 0)
+    const c = (grade.parameters.contrast   as number) ?? 1
+    const s = (grade.parameters.saturation as number) ?? 1
+    filterParts.push(`brightness(${b}) contrast(${c}) saturate(${s})`)
+  }
+  if (blurEffect) {
+    const radius = (blurEffect.parameters.radius as number) ?? 5
+    filterParts.push(`blur(${Math.round(radius * 0.6)}px)`)
+  }
+  if (sharpEffect) {
+    const amount = (sharpEffect.parameters.amount as number) ?? 1
+    filterParts.push(`contrast(${1 + amount * 0.08})`)
+  }
+  const videoFilter = filterParts.join(' ')
+  const transformEffect = effects.find((e) => e.type === 'transform' && e.enabled)
+  const opacityEffect = effects.find((e) => e.type === 'opacity' && e.enabled)
+  const blendModeEffect = effects.find((e) => e.type === 'blend_mode' && e.enabled)
+  const textOverlayEffect = effects.find((e) => e.type === 'text_overlay' && e.enabled)
+
+  const resolvedTransform = useMemo(
+    () => resolveEffectParameters(transformEffect, clipLocalTime),
+    [transformEffect, clipLocalTime]
+  )
+  const resolvedOpacity = useMemo(
+    () => resolveEffectParameters(opacityEffect, clipLocalTime),
+    [opacityEffect, clipLocalTime]
+  )
+  const resolvedBlendMode = useMemo(
+    () => resolveEffectParameters(blendModeEffect, clipLocalTime),
+    [blendModeEffect, clipLocalTime]
+  )
+  const resolvedTextOverlay = useMemo(
+    () => resolveEffectParameters(textOverlayEffect, clipLocalTime),
+    [textOverlayEffect, clipLocalTime]
+  )
+
+  const transformX = Number(resolvedTransform.x ?? 0)
+  const transformY = Number(resolvedTransform.y ?? 0)
+  const scaleX = Number(resolvedTransform.scaleX ?? resolvedTransform.scale ?? 1)
+  const scaleY = Number(resolvedTransform.scaleY ?? resolvedTransform.scale ?? 1)
+  const rotation = Number(resolvedTransform.rotation ?? 0)
+  const compositeTransform = `translate(${transformX}px, ${transformY}px) rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`
+  const blendMode = String(resolvedBlendMode.mode ?? 'normal') as React.CSSProperties['mixBlendMode']
+  const extraOpacity = Math.max(0, Math.min(1, Number(resolvedOpacity.opacity ?? 1)))
+  videoOpacity *= extraOpacity
+
+  const textOverlayText = String(resolvedTextOverlay.text ?? '').trim()
+  const textOverlayX = Number(resolvedTextOverlay.x ?? 0)
+  const textOverlayY = Number(resolvedTextOverlay.y ?? 0)
+  const textOverlayScale = Number(resolvedTextOverlay.scale ?? 1)
+  const textOverlayRotation = Number(resolvedTextOverlay.rotation ?? 0)
+  const textOverlayOpacity = Math.max(0, Math.min(1, Number(resolvedTextOverlay.opacity ?? 1)))
+  const textOverlayFontSize = Number(resolvedTextOverlay.fontSize ?? 56)
+
+  // --- Stable refs for RAF and event callbacks ---
+  const previewClipRef     = useRef(previewClip)
+  const previewClipsRef    = useRef(previewClips)
+  const totalDurationRef   = useRef(totalDuration)
+  const clipDurationRef    = useRef(clipDuration)
+  const setIsPlayingRef    = useRef(setIsPlaying)
+  const setPlayheadTimeRef = useRef(setPlayheadTime)
+  const isPlayingRef       = useRef(isPlaying)
+  const assetTypeRef       = useRef(asset?.type)
+  const videoFileTimeRef   = useRef(videoFileTime)
+  const playheadTimeRef    = useRef(playheadTime)
+  const lastTimelineTickRef = useRef<number | null>(null)
+  useEffect(() => { previewClipRef.current     = previewClip     }, [previewClip])
+  useEffect(() => { previewClipsRef.current    = previewClips    }, [previewClips])
+  useEffect(() => { totalDurationRef.current   = totalDuration   }, [totalDuration])
+  useEffect(() => { clipDurationRef.current    = clipDuration    }, [clipDuration])
+  useEffect(() => { setIsPlayingRef.current    = setIsPlaying    }, [setIsPlaying])
+  useEffect(() => { setPlayheadTimeRef.current = setPlayheadTime }, [setPlayheadTime])
+  useEffect(() => { isPlayingRef.current       = isPlaying       }, [isPlaying])
+  useEffect(() => { assetTypeRef.current       = asset?.type     }, [asset?.type])
+  useEffect(() => { videoFileTimeRef.current   = videoFileTime   }, [videoFileTime])
+  useEffect(() => { playheadTimeRef.current    = playheadTime    }, [playheadTime])
+
+  function restoreVideoState() {
+    const videos = Object.values(layerVideoRefs.current).filter((node): node is HTMLVideoElement => Boolean(node))
+    if (videos.length === 0 || assetTypeRef.current !== 'video') return
+    const shouldResumePlayback = isPlayingRef.current
+
+    for (const layer of activeVideoLayers) {
+      const video = layerVideoRefs.current[layer.clip.id]
+      if (!video) continue
+      const desiredTime = layer.videoFileTime
+      const sync = () => {
+        if (Math.abs(video.currentTime - desiredTime) > 0.05) {
+          video.currentTime = desiredTime
+        }
+        if (shouldResumePlayback) {
+          void video.play().catch(() => setIsPlayingRef.current(false))
+        } else {
+          video.pause()
+        }
+      }
+
+      video.load()
+      if (video.readyState >= 1) {
+        sync()
+        continue
+      }
+      video.addEventListener('loadedmetadata', sync, { once: true })
+    }
+  }
+
+  function syncVideoToTimelinePosition(force = false) {
+    if (assetTypeRef.current !== 'video') return
+    for (const layer of activeVideoLayers) {
+      const video = layerVideoRefs.current[layer.clip.id]
+      if (!video) continue
+      const desiredTime = layer.videoFileTime
+      if (force || Math.abs(video.currentTime - desiredTime) > 0.05) {
+        video.currentTime = desiredTime
+      }
+    }
+  }
+
+  function playFromTimelinePosition() {
+    if (assetTypeRef.current !== 'video') return
+
+    for (const layer of activeVideoLayers) {
+      const video = layerVideoRefs.current[layer.clip.id]
+      if (!video) continue
+      const desiredTime = layer.videoFileTime
+      const delta = Math.abs(video.currentTime - desiredTime)
+
+      const startPlayback = () => {
+        void video.play().catch(() => setIsPlayingRef.current(false))
+      }
+
+      const performSeekThenPlay = () => {
+        if (delta <= 0.05) {
+          startPlayback()
+          return
+        }
+
+        const handleSeeked = () => {
+          video.removeEventListener('seeked', handleSeeked)
+          startPlayback()
+        }
+
+        video.addEventListener('seeked', handleSeeked, { once: true })
+        video.currentTime = desiredTime
+      }
+
+      if (video.readyState >= 1) {
+        performSeekThenPlay()
+        continue
+      }
+
+      const handleMetadata = () => {
+        video.removeEventListener('loadedmetadata', handleMetadata)
+        performSeekThenPlay()
+      }
+      video.addEventListener('loadedmetadata', handleMetadata, { once: true })
+      video.load()
+    }
+  }
+
+  // --- Mute sync ---
+  useEffect(() => {
+    for (const video of Object.values(layerVideoRefs.current)) {
+      if (video) video.muted = muted
+    }
+  }, [muted])
+
+  // --- Prune stale video refs on clip/project changes ---
+  useEffect(() => {
+    const activeClipIds = new Set(activeVideoLayers.map((layer) => layer.clip.id))
+    for (const [clipId, video] of Object.entries(layerVideoRefs.current)) {
+      if (activeClipIds.has(clipId)) continue
+      if (video) {
+        video.pause()
+        video.currentTime = 0
+      }
+      delete layerVideoRefs.current[clipId]
+    }
+  }, [activeVideoLayers])
+
+  // --- Play / pause ---
+  useEffect(() => {
+    if (isPlaying) {
+      const video = layerVideoRefs.current[previewClip?.id ?? ''] ?? null
+      if (!video || asset?.type !== 'video') return
+      playFromTimelinePosition()
+    } else {
+      for (const video of Object.values(layerVideoRefs.current)) {
+        video?.pause()
+      }
+    }
+  }, [asset?.type, assetUrl, isPlaying, videoFileTime, setIsPlaying])
+
+  // --- Seek on scrub / initial position ---
+  useEffect(() => {
+    const video = layerVideoRefs.current[previewClip?.id ?? ''] ?? null
+    if (!video || asset?.type !== 'video') return
+    const desired = videoFileTime
+    const doSeek = () => {
+      const delta = Math.abs(video.currentTime - desired)
+      if (!isPlaying || delta > 0.2)
+        video.currentTime = desired
+    }
+    if (video.readyState >= 1) {
+      doSeek()
+    } else {
+      video.addEventListener('loadedmetadata', doSeek, { once: true })
+      return () => video.removeEventListener('loadedmetadata', doSeek)
+    }
+  }, [asset?.type, assetUrl, isPlaying, videoFileTime])
+
+  // --- RAF loop: sync playhead for both source-video transport and still/audio timelines ---
+  useEffect(() => {
+    if (!isPlaying) return
+
+    lastTimelineTickRef.current = null
+
+    function tick() {
+      const totalDur = totalDurationRef.current
+      const clipDur = clipDurationRef.current
+      const activeType = assetTypeRef.current
+      const video = layerVideoRefs.current[previewClipRef.current?.id ?? ''] ?? null
+
+      if (activeType === 'video' && video) {
+        const current = video.currentTime
+        const clip = previewClipRef.current
+
+        if (clip) {
+          const fileEnd = clip.inPoint + clip.duration
+          if (current >= fileEnd - 0.04) {
+            const clipEnd = clip.startTime + clip.duration
+            const nextClip = previewClipsRef.current.find((candidate) => candidate.startTime > clip.startTime + 0.001)
+            const contiguousNextClip =
+              nextClip && Math.abs(nextClip.startTime - clipEnd) <= 0.05 ? nextClip : null
+
+            if (contiguousNextClip) {
+              previewClipRef.current = contiguousNextClip
+              clipDurationRef.current = contiguousNextClip.duration
+              playheadTimeRef.current = contiguousNextClip.startTime
+              setPlayheadTimeRef.current(contiguousNextClip.startTime)
+              rafRef.current = window.requestAnimationFrame(tick)
+              return
+            }
+
+            video.pause()
+            setIsPlayingRef.current(false)
+            playheadTimeRef.current = Math.min(totalDur || clipDur, clipEnd)
+            setPlayheadTimeRef.current(Math.min(totalDur || clipDur, clipEnd))
+            return
+          }
+          const nextPlayhead = clip.startTime + (current - clip.inPoint)
+          const capped = Math.max(0, Math.min(totalDur || clipDur, nextPlayhead))
+          playheadTimeRef.current = capped
+          setPlayheadTimeRef.current(capped)
+          if (capped >= (totalDur || clipDur) - 0.04) {
+            video.pause()
+            setIsPlayingRef.current(false)
+            return
+          }
+        } else {
+          const capped = Math.max(0, Math.min(totalDur || clipDur, current))
+          playheadTimeRef.current = capped
+          setPlayheadTimeRef.current(capped)
+          if (capped >= (totalDur || clipDur) - 0.04) {
+            video.pause()
+            setIsPlayingRef.current(false)
+            return
+          }
+        }
+      } else {
+        const now = performance.now()
+        const previousTick = lastTimelineTickRef.current ?? now
+        lastTimelineTickRef.current = now
+        const elapsedSeconds = Math.max(0, (now - previousTick) / 1000)
+        const nextPlayhead = Math.max(0, Math.min(totalDur || clipDur, playheadTimeRef.current + elapsedSeconds))
+        playheadTimeRef.current = nextPlayhead
+        setPlayheadTimeRef.current(nextPlayhead)
+        if (nextPlayhead >= (totalDur || clipDur) - 0.001) {
+          setIsPlayingRef.current(false)
+          return
+        }
+      }
+
+      rafRef.current = window.requestAnimationFrame(tick)
+    }
+
+    rafRef.current = window.requestAnimationFrame(tick)
+    return () => {
+      if (rafRef.current !== null) { window.cancelAnimationFrame(rafRef.current); rafRef.current = null }
+    }
+  }, [asset?.type, isPlaying, previewClip?.id, activeVideoLayers])
+
+  useEffect(() => () => {
+    if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current)
+    for (const video of Object.values(layerVideoRefs.current)) {
+      video?.pause()
+    }
+    layerVideoRefs.current = {}
+  }, [])
+
+  useEffect(() => {
+    if (!isPlaying) {
+      lastTimelineTickRef.current = null
+    }
+  }, [isPlaying])
+
+  useEffect(() => {
+    if (asset?.type !== 'video') return
+
+    const handleAppResume = () => {
+      restoreVideoState()
+    }
+    const handleVisibilityChange = () => {
+      if (!document.hidden) restoreVideoState()
+    }
+    const handleWindowFocus = () => {
+      restoreVideoState()
+    }
+
+    const unsubscribeResume = window.api.onAppResume(handleAppResume)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('pageshow', handleWindowFocus)
+
+    return () => {
+      unsubscribeResume()
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleWindowFocus)
+      window.removeEventListener('pageshow', handleWindowFocus)
+    }
+  }, [asset?.type, assetUrl])
+
+  // --- Scrub ---
+  function handleScrub(ratio: number): void {
+    const bounded = Math.max(0, Math.min(1, ratio))
+    const capped = Math.max(0, Math.min(totalDuration || clipDuration, bounded * (totalDuration || clipDuration)))
+    setPlayheadTime(capped)
+  }
+
+  async function toggleFullscreen(): Promise<void> {
+    if (!containerRef.current) return
+    if (document.fullscreenElement) { await document.exitFullscreen(); return }
+    await containerRef.current.requestFullscreen()
+  }
+
+  return (
+    <div className="flex flex-col h-full bg-surface-0" ref={containerRef}>
+      {/* Video area */}
+      <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden min-h-0">
+        {renderedVideoLayers.length > 0 ? (
+          renderedVideoLayers.map((layer, index) => {
+            const layerPreviewKey = getPreviewCacheKey(layer.asset)
+            const layerAssetUrl = resolvedPreviewPaths[layerPreviewKey]
+              ? `${window.api.toFileUrl(resolvedPreviewPaths[layerPreviewKey].path)}&v=${encodeURIComponent(resolvedPreviewPaths[layerPreviewKey].cacheKey)}`
+              : null
+            const primaryAudioClipId = previewClip?.id ?? renderedVideoLayers[0]?.clip.id ?? null
+            const audioMuted = layer.clip.id !== primaryAudioClipId
+
+            return layerAssetUrl || layer.asset.type === 'image' ? (
+              <PreviewLayer
+                key={layer.clip.id}
+                layer={layer}
+                assetUrl={layerAssetUrl}
+                muted={muted}
+                audioMuted={audioMuted}
+                onTogglePlay={() => setIsPlaying(!isPlaying)}
+                registerVideoRef={(clipId, node) => {
+                  layerVideoRefs.current[clipId] = node
+                  if (index === 0) videoRef.current = node
+                }}
+              />
+            ) : (
+              <div key={layer.clip.id} className="absolute inset-0 bg-black flex items-center justify-center">
+                <div className="text-center space-y-2">
+                  <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-white/70 animate-spin mx-auto" />
+                  <p className="text-text-dim text-xs">Preparing preview…</p>
+                </div>
+              </div>
+            )
+          })
+        ) : asset?.type === 'image' && assetUrl ? (
+          <img src={assetUrl} alt={asset.name} className="w-full h-full object-contain bg-black" />
+        ) : (
+          <div className="w-full h-full bg-gradient-to-br from-surface-2 to-surface-0 flex items-center justify-center relative">
+            <div
+              className="absolute inset-0 opacity-5"
+              style={{
+                backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
+                backgroundSize: '48px 48px'
+              }}
+            />
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-4 h-px bg-white/20" /><div className="h-4 w-px bg-white/20 absolute" />
+            </div>
+            <div className="text-center space-y-2 relative z-10">
+              <div className="w-16 h-16 rounded-full bg-surface-3 border border-border flex items-center justify-center mx-auto">
+                <Play size={24} className="text-text-dim ml-1" />
+              </div>
+              <p className="text-text-dim text-xs">{asset ? asset.name : 'No media loaded'}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="absolute top-2 left-2 bg-black/70 text-white font-mono text-2xs px-2 py-0.5 rounded pointer-events-none">
+          {formatTimecode(clipLocalTime)}
+        </div>
+        <div className="absolute top-2 right-2 bg-black/70 text-text-dim text-2xs px-2 py-0.5 rounded pointer-events-none">
+          {asset?.type === 'audio' ? 'Audio' : asset?.type === 'image' ? 'Still' : 'Preview'}
+        </div>
+        <button
+          className="absolute bottom-2 right-2 p-1 bg-black/60 hover:bg-black/80 rounded text-text-secondary hover:text-white transition-colors"
+          onClick={() => void toggleFullscreen()}
+        >
+          <Maximize2 size={12} />
+        </button>
+      </div>
+
+      {/* Scrub bar */}
+      <div className="px-3 py-1.5 bg-surface-1">
+        <div
+          className="relative h-1.5 bg-surface-4 rounded-full cursor-pointer group"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect()
+            handleScrub((e.clientX - rect.left) / rect.width)
+          }}
+        >
+          <div className="absolute left-0 top-0 h-full bg-accent rounded-full" style={{ width: `${progress}%` }} />
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1/2"
+            style={{ left: `${progress}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Transport controls */}
+      <div className="flex items-center justify-between px-3 py-2 bg-surface-1 border-t border-border flex-shrink-0">
+        <div className="flex items-center gap-1">
+          <TransportBtn
+            icon={<SkipBack size={13} />}
+            onClick={() => {
+              setPlayheadTime(previewClip?.startTime ?? 0)
+              const v = videoRef.current
+              if (v) v.currentTime = previewClip?.inPoint ?? 0
+            }}
+            title="Go to start"
+          />
+          <TransportBtn
+            icon={<Scissors size={13} />}
+            onClick={() => void splitSelectedClip()}
+            title="Split at playhead"
+            disabled={!selectedClip}
+          />
+        </div>
+        <div className="flex items-center gap-1">
+          <TransportBtn
+            icon={isPlaying ? <Pause size={14} /> : <Play size={14} />}
+            onClick={() => setIsPlaying(!isPlaying)}
+            title={isPlaying ? 'Pause' : 'Play'}
+            primary
+            disabled={!asset}
+          />
+        </div>
+        <div className="flex items-center gap-1">
+          <TransportBtn
+            icon={<SkipForward size={13} />}
+            onClick={() => setPlayheadTime(totalDuration || clipDuration)}
+            title="Go to end"
+          />
+          <TransportBtn
+            icon={muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+            onClick={() => setMuted((v) => !v)}
+            title="Toggle audio"
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TransportBtn({
+  icon, onClick, title, primary, disabled
+}: {
+  icon: React.ReactNode; onClick: () => void; title: string; primary?: boolean; disabled?: boolean
+}) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      className={clsx(
+        'p-1.5 rounded transition-colors',
+        disabled
+          ? 'text-text-dim opacity-40 cursor-not-allowed'
+          : primary
+            ? 'bg-accent hover:bg-accent-hover text-black w-8 h-8 flex items-center justify-center'
+            : 'text-text-secondary hover:text-text-primary hover:bg-surface-3'
+      )}
+    >
+      {icon}
+    </button>
+  )
+}
