@@ -425,7 +425,20 @@ async function ensureEditorctlShim(): Promise<{ shimPath: string | null; binDir:
     return { shimPath: null, binDir }
   }
 
-  const script = `#!/bin/sh\nnode "${entryPath}" "$@"\n`
+  const candidates = getEditorctlCandidates()
+    .map((candidate) => `"${candidate.replace(/"/g, '\\"')}"`)
+    .join(' ')
+
+  const script = `#!/bin/sh
+for candidate in ${candidates}; do
+  if [ -f "$candidate" ]; then
+    exec node "$candidate" "$@"
+  fi
+done
+
+echo "editorctl could not find its CLI runtime." >&2
+exit 1
+`
   await writeFile(shimPath, script, 'utf8')
   await chmod(shimPath, 0o755)
 
