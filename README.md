@@ -91,6 +91,32 @@ Monet is currently macOS-first.
 
 Open the `.dmg` and drag `Monet.app` into `Applications`.
 
+### If macOS blocks Monet on first launch
+
+Because Monet is currently distributed outside the Mac App Store and is not notarized, macOS may show a warning like:
+
+- `"Monet" Not Opened`
+- `Apple could not verify "Monet" is free of malware`
+
+If that happens:
+
+1. Try to open `Monet.app` once and let macOS block it.
+2. Open `System Settings → Privacy & Security`.
+3. Scroll down to the security section.
+4. Click `Open Anyway` next to Monet.
+5. Confirm the launch.
+
+After that, macOS should allow Monet to open normally on that machine.
+
+If you prefer, you can also:
+
+1. Open `Applications`
+2. Right-click `Monet.app`
+3. Click `Open`
+4. Confirm the prompt
+
+That also creates the exception and avoids repeating the warning.
+
 For a local packaged build from source:
 
 ```bash
