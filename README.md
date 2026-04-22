@@ -1,5 +1,5 @@
 <h1 align="center">Monet</h1>
-<p align="center">AI-first video editor for coding agents</p>
+<p align="center">AI video editor for coding agents</p>
 
 <p align="center">
   <img src="./resources/monet-mark.png" alt="Monet logo" width="120" />
