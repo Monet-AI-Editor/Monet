@@ -158,22 +158,31 @@ function buildApplicationMenu(): Menu {
                     type: 'info',
                     buttons: ['OK'],
                     title: `${APP_NAME} is up to date`,
-                    message: `${APP_NAME} ${app.getVersion()} is the current version.`
+                    message: state.message || `${APP_NAME} ${app.getVersion()} is the current version.`
                   })
                   return
                 }
 
                 await dialog.showMessageBox({
                   type: state.status === 'available' ? 'info' : 'none',
-                  buttons: ['OK'],
+                  buttons: state.status === 'available' ? ['Download', 'Later'] : ['OK'],
                   title: 'Update status',
                   message: state.message || 'Update state changed.',
                   detail:
                     state.status === 'available'
-                      ? 'The update button is now available in the top bar.'
+                      ? `Monet ${state.availableVersion} is available. You can download it now or use the update button in the top bar.`
                       : state.status === 'downloading' || state.status === 'downloaded' || state.status === 'restarting'
                         ? 'Monet is already applying an update.'
                         : ''
+                }).then(async (result) => {
+                  if (state.status === 'available' && result.response === 0) {
+                    await updateService.applyUpdate({
+                      onRestart: () => undefined,
+                      openExternal: async (url) => {
+                        await shell.openExternal(url)
+                      }
+                    })
+                  }
                 })
               }
             },
@@ -711,7 +720,11 @@ app.whenReady().then(async () => {
   recentProjectsStore = new RecentProjectsStore(join(app.getPath('userData'), 'recent-projects.json'))
   projectStore = new ProjectStore(getProjectAutosavePath(null))
   settingsStore = new SettingsStore(join(app.getPath('userData'), 'settings.json'))
-  updateService = new UpdateService(app.getVersion())
+  updateService = new UpdateService(app.getVersion(), {
+    owner: 'Monet-AI-Editor',
+    repo: 'Monet',
+    assetName: `Monet-macOS-${process.arch}.dmg`
+  })
   analyticsService = new AnalyticsService(
     join(app.getPath('userData'), 'analytics', 'state.json'),
     join(app.getPath('userData'), 'analytics', 'events.ndjson'),
@@ -800,6 +813,10 @@ app.whenReady().then(async () => {
   backfillCaptionsForTranscriptAssets()
   if (is.dev && process.env.MONET_SIMULATE_UPDATE === '1') {
     updateService.scheduleDevSimulation()
+  } else if (!is.dev) {
+    setTimeout(() => {
+      void updateService.checkForUpdates()
+    }, 2500)
   }
 
   protocol.handle('media', (request) => {
@@ -976,13 +993,18 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('app:applyUpdate', async () => {
-    return updateService.applyUpdate(() => {
-      if (editorWindow && !editorWindow.isDestroyed()) {
-        editorWindow.reload()
-        editorWindow.focus()
-      } else if (launcherWindow && !launcherWindow.isDestroyed()) {
-        launcherWindow.reload()
-        launcherWindow.focus()
+    return updateService.applyUpdate({
+      onRestart: () => {
+        if (editorWindow && !editorWindow.isDestroyed()) {
+          editorWindow.reload()
+          editorWindow.focus()
+        } else if (launcherWindow && !launcherWindow.isDestroyed()) {
+          launcherWindow.reload()
+          launcherWindow.focus()
+        }
+      },
+      openExternal: async (url) => {
+        await shell.openExternal(url)
       }
     })
   })
