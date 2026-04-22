@@ -87,6 +87,9 @@ declare global {
       embedAssets: () => Promise<{ embedded: number; total: number }>
       chatWithEditor: (request: unknown) => Promise<unknown>
       exportActiveSequence: (outputPath: string, options?: ExportOptions) => Promise<ExportResult>
+      addEffect: (clipId: string, effectType: string, parameters: Record<string, unknown>) => Promise<unknown>
+      removeEffect: (clipId: string, effectId: string) => Promise<unknown>
+      updateEffectParameters: (clipId: string, effectId: string, parameters: Record<string, unknown>) => Promise<unknown>
       createTerminalSession: (options: { cols: number; rows: number; cwd?: string; shell?: string }) => Promise<{ id: string; cwd: string }>
       writeTerminal: (sessionId: string, data: string) => Promise<void>
       resizeTerminal: (sessionId: string, cols: number, rows: number) => Promise<void>

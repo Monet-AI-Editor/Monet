@@ -15,6 +15,9 @@ export function TerminalPanel({
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const sessionIdRef = useRef<string | null>(null)
+  const resizeFrameRef = useRef<number | null>(null)
+  const lastGeometryRef = useRef<{ cols: number; rows: number } | null>(null)
+  const deferredResizeRef = useRef(false)
   const [status, setStatus] = useState('Starting shell')
   const [cwd, setCwd] = useState('')
   const [agentStatus, setAgentStatus] = useState<{ codexInstalled: boolean; claudeInstalled: boolean } | null>(null)
@@ -30,11 +33,11 @@ export function TerminalPanel({
     const terminal = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
-      fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Menlo, Monaco, Consolas, monospace',
+      fontFamily: 'Menlo, Monaco, SFMono-Regular, SF Mono, Consolas, monospace',
       fontSize: 13,
       fontWeight: '400',
       letterSpacing: 0,
-      lineHeight: 1.1,
+      lineHeight: 1,
       scrollback: 5000,
       theme: {
         background: '#111318',
@@ -60,17 +63,62 @@ export function TerminalPanel({
         brightWhite: '#ffffff'
       },
       allowTransparency: false,
-      drawBoldTextInBrightColors: false
+      drawBoldTextInBrightColors: false,
+      customGlyphs: false,
+      rightClickSelectsWord: false,
+      smoothScrollDuration: 0,
+      scrollOnUserInput: false,
+      fastScrollModifier: 'alt',
+      fastScrollSensitivity: 5
     })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
     terminal.open(hostRef.current)
-    fitAddon.fit()
+
+    const applyResize = () => {
+      if (!hostRef.current) return
+      fitAddon.fit()
+      const previous = lastGeometryRef.current
+      const next = { cols: terminal.cols, rows: terminal.rows }
+      const activeBufferType = terminal.buffer.active.type
+
+      if (
+        activeBufferType === 'alternate' &&
+        previous &&
+        (next.cols < previous.cols || next.rows < previous.rows)
+      ) {
+        deferredResizeRef.current = true
+        terminal.resize(previous.cols, previous.rows)
+        return
+      }
+
+      if (previous && previous.cols === next.cols && previous.rows === next.rows) return
+      lastGeometryRef.current = next
+      const sessionId = sessionIdRef.current
+      if (!sessionId) return
+      void window.api.resizeTerminal(sessionId, next.cols, next.rows).catch(() => undefined)
+    }
+
+    const scheduleResize = () => {
+      if (resizeFrameRef.current != null) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
+      }
+      resizeFrameRef.current = window.requestAnimationFrame(() => {
+        resizeFrameRef.current = null
+        applyResize()
+      })
+    }
+
+    scheduleResize()
 
     let disposed = false
     const unsubscribeData = window.api.onTerminalData(({ sessionId, data }) => {
       if (sessionId !== sessionIdRef.current) return
       terminal.write(data)
+      if (deferredResizeRef.current && terminal.buffer.active.type === 'normal') {
+        deferredResizeRef.current = false
+        scheduleResize()
+      }
     })
     const unsubscribeExit = window.api.onTerminalExit(({ sessionId, exitCode }) => {
       if (sessionId !== sessionIdRef.current) return
@@ -85,10 +133,7 @@ export function TerminalPanel({
     })
 
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit()
-      const sessionId = sessionIdRef.current
-      if (!sessionId) return
-      void window.api.resizeTerminal(sessionId, terminal.cols, terminal.rows).catch(() => undefined)
+      scheduleResize()
     })
     resizeObserver.observe(hostRef.current)
 
@@ -103,6 +148,7 @@ export function TerminalPanel({
         sessionIdRef.current = session.id
         setCwd(session.cwd)
         setStatus('Ready')
+        scheduleResize()
       })
       .catch((error: Error) => {
         setStatus(error.message)
@@ -116,6 +162,9 @@ export function TerminalPanel({
       const sessionId = sessionIdRef.current
       if (sessionId) {
         void window.api.killTerminal(sessionId).catch(() => undefined)
+      }
+      if (resizeFrameRef.current != null) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
       }
       terminal.dispose()
     }
@@ -284,7 +333,7 @@ export function TerminalPanel({
           </div>
         </div>
       )}
-      <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden bg-[#0f1115] px-2 py-1.5" />
+      <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden bg-[#0f1115]" />
     </div>
   )
 }

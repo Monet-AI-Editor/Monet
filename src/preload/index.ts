@@ -58,6 +58,10 @@ const api = {
   embedAssets: () => ipcRenderer.invoke('editor:embedAssets'),
   chatWithEditor: (request: unknown) => ipcRenderer.invoke('editor:chat', request),
   exportActiveSequence: (outputPath: string, options?: unknown) => ipcRenderer.invoke('editor:exportActiveSequence', outputPath, options),
+  addEffect: (clipId: string, effectType: string, parameters: Record<string, unknown>) => ipcRenderer.invoke('editor:addEffect', clipId, effectType, parameters),
+  removeEffect: (clipId: string, effectId: string) => ipcRenderer.invoke('editor:removeEffect', clipId, effectId),
+  updateEffectParameters: (clipId: string, effectId: string, parameters: Record<string, unknown>) =>
+    ipcRenderer.invoke('editor:updateEffectParameters', clipId, effectId, parameters),
   createTerminalSession: (options: { cols: number; rows: number; cwd?: string; shell?: string }) =>
     ipcRenderer.invoke('terminal:createSession', options),
   writeTerminal: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', sessionId, data),

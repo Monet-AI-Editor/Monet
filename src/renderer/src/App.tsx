@@ -121,7 +121,8 @@ export default function App() {
     function onMove(me: MouseEvent) {
       const delta = me.clientY - startY
       const centerH = containerH - 44
-      const newFrac = Math.max(0.18, Math.min(0.65, startFrac - delta / centerH))
+      const minFrac = terminalGuideOpen && bottomTab === 'terminal' ? 0.56 : 0.18
+      const newFrac = Math.max(minFrac, Math.min(0.65, startFrac - delta / centerH))
       setBottomFraction(newFrac)
     }
 
@@ -132,7 +133,7 @@ export default function App() {
 
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-  }, [bottomFraction])
+  }, [bottomFraction, bottomTab, terminalGuideOpen])
 
   const handleTerminalGuideToggle = useCallback((open: boolean) => {
     setTerminalGuideOpen(open)
@@ -275,6 +276,8 @@ export default function App() {
                     playheadTime={store.playheadTime}
                     setPlayheadTime={store.setPlayheadTime}
                     totalDuration={store.totalDuration}
+                    activeSequenceWidth={store.activeSequenceWidth}
+                    activeSequenceHeight={store.activeSequenceHeight}
                     selectedClipId={store.selectedClipId}
                     selectedAssetId={store.selectedAssetId}
                     assets={store.assets}

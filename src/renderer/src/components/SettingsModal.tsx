@@ -98,7 +98,7 @@ export function SettingsModal({
               placeholder="sk-…"
             />
             <p className="text-2xs text-text-dim leading-relaxed">
-              Required for embeddings and semantic search. If local transcription is unavailable, Monet can also use OpenAI as a fallback. Embeddings use <span className="font-mono text-text-secondary">text-embedding-3-small</span>.
+              Required for embeddings and semantic search. If local transcription is unavailable, Monet can also use OpenAI as a fallback, and the same key can be reused for GPT Image 2 generation. Embeddings use <span className="font-mono text-text-secondary">text-embedding-3-small</span>.
             </p>
           </section>
 

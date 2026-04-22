@@ -133,7 +133,7 @@ export function WelcomeScreen({
                   OpenAI embeddings key
                 </div>
                 <p className="mt-2 text-[11px] leading-relaxed text-white/40">
-                  Required for embeddings and semantic search. Monet keeps this local on your device.
+                  Required for embeddings and semantic search. The same OpenAI key can also be used for GPT Image 2 generation and OpenAI transcription features. Monet keeps this local on your device.
                 </p>
                 <input
                   type="password"

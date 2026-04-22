@@ -48,6 +48,12 @@ export type ClipEffectType =
   | 'text_overlay'
   | 'chroma_key'
   | 'mask_box'
+  | 'drop_shadow'
+  | 'glow'
+  | 'background_fill'
+  | 'gradient_fill'
+  | 'shape_overlay'
+  | 'reveal_wipe'
 
 export type ClipEffectEasing = 'linear' | 'ease_in' | 'ease_out' | 'ease_in_out'
 
@@ -110,7 +116,7 @@ export interface ToolCall {
 export interface BackgroundTask {
   id: string
   label: string
-  type: 'transcribe' | 'proxy' | 'embed' | 'export' | 'analyze'
+  type: 'transcribe' | 'proxy' | 'embed' | 'export' | 'analyze' | 'generate'
   progress: number
   status: 'queued' | 'running' | 'done' | 'error'
   assetId?: string
@@ -121,6 +127,8 @@ export interface SequenceSummary {
   name: string
   duration: number
   active: boolean
+  width: number
+  height: number
 }
 
 export interface RecentProject {

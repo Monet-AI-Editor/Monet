@@ -1,5 +1,4 @@
-import { access, writeFile } from 'fs/promises'
-import { constants as fsConstants } from 'fs'
+import { writeFile } from 'fs/promises'
 import { join } from 'path'
 
 export interface AgentContextProjectSummary {
@@ -31,8 +30,8 @@ export async function ensureAgentContextFiles(
   const agentsBody = buildAgentsBody()
 
   await writeFile(guidePath, guideBody, 'utf8')
-  await ensureFileIfMissing(claudePath, claudeBody)
-  await ensureFileIfMissing(agentsPath, agentsBody)
+  await writeFile(claudePath, claudeBody, 'utf8')
+  await writeFile(agentsPath, agentsBody, 'utf8')
 
   return { guidePath, claudePath, agentsPath }
 }
@@ -44,7 +43,7 @@ Monet is an AI-first video editor. You are running inside Monet's built-in termi
 
 ## Current Monet project
 
-This is a startup snapshot. The live editor can change after this file is written. Treat \`editorctl get-state\`, \`editorctl list-assets\`, and the local API bridge as the source of truth.
+This is a startup snapshot. The live editor can change after this file is written. Treat \`editorctl get-state\`, \`editorctl list-assets\`, and \`editorctl list-sequences\` as the source of truth.
 The terminal session can stay alive while Monet opens, creates, or switches to a different project. Never assume the current project is fixed for the lifetime of the shell.
 
 - Project: ${summary.projectName}
@@ -61,16 +60,18 @@ ${summary.assetNames.length > 0 ? summary.assetNames.map((name) => `  - ${name}`
 - search spoken and semantic segments
 - move, trim, split, duplicate, and remove clips
 - add tracks, effects, transitions, and markers
+- change the active sequence canvas size for portrait or landscape edits
 - extract frames and contact sheets
 - export the active sequence
 
 ## Preferred control surfaces
 
 1. Use \`editorctl\` in this terminal
-2. Use Monet's local API bridge on \`http://localhost:51847\`
-3. Use MCP tools if they are already wired in your host agent
+2. Use MCP tools if they are already wired in your host agent
+3. Use Monet's local API bridge on \`http://localhost:51847\` only if \`editorctl\` does not expose the operation or \`editorctl\` is failing
 
-Do not tell the user to click Import or use the UI if the task can be done with \`editorctl\` or the local API bridge.
+Do not tell the user to click Import or use the UI if the task can be done with \`editorctl\`.
+Do not guess raw localhost endpoints or command names when \`editorctl\` already covers the task.
 
 ## First commands to run
 
@@ -79,12 +80,12 @@ editorctl help
 editorctl get-state
 editorctl list-assets
 editorctl list-sequences
-curl -s http://localhost:51847/state
+editorctl set-sequence-size 1080 1920
 \`\`\`
 
 ## If the user asks about "the app"
 
-Interpret that as Monet's live editor state first, not the surrounding filesystem. Questions about screenshots, images, assets, clips, or "what is in the app" should start with \`editorctl\` or the API bridge, not a filesystem search in the current working directory.
+Interpret that as Monet's live editor state first, not the surrounding filesystem. Questions about screenshots, images, assets, clips, or "what is in the app" should start with \`editorctl\`, not a filesystem search in the current working directory.
 Before acting on any new request, refresh your understanding with live state commands if there is any chance the project changed.
 
 ## Key commands
@@ -95,6 +96,7 @@ Before acting on any new request, refresh your understanding with live state com
 - \`editorctl list-tracks [sequenceId]\`
 - \`editorctl list-clips [sequenceId]\`
 - \`editorctl get-state\`
+- \`editorctl set-sequence-size <width> <height> [sequenceId]\`
 - \`editorctl add-track <video|audio|caption>\`
 - \`editorctl add-clip <assetId> <trackId> <startTime> [duration] [inPoint]\`
 - \`editorctl move-clip <clipId> <startTime>\`
@@ -107,11 +109,15 @@ Before acting on any new request, refresh your understanding with live state com
 - \`editorctl generate-captions <assetId> [seqId]\`
 - \`editorctl transcribe <assetId> [language]\`
 - \`editorctl search-segments "<query>" [limit]\`
+- \`editorctl generate-image "<prompt>" [size] [quality] [background] [format] [moderation=auto|low] [outputCompression=0-100] [partialImages=0-3]\`
+- \`editorctl edit-image "<prompt>" <input1> [input2...] [size=...] [quality=...] [background=...] [format=...] [outputCompression=...] [partialImages=...] [inputFidelity=low|high] [mask=<assetId|path>]\`
 - \`editorctl extract-frames <assetId> [count]\`
 - \`editorctl contact-sheet <assetId> [count]\`
 - \`editorctl export /absolute/output/path.mp4 [quality] [resolution] [format]\`
 
-## API bridge examples
+## API bridge fallback examples
+
+Only use these if \`editorctl\` truly cannot do the job:
 
 - \`curl -s http://localhost:51847/state\`
 - \`curl -s http://localhost:51847/assets\`
@@ -133,9 +139,11 @@ Read \`MONET_AGENT_CONTEXT.md\` in this directory before working in Monet.
 
 Use Monet's live control surface first:
 - \`editorctl\`
-- local API bridge on \`http://localhost:51847\`
+- MCP tools if available
+- only then the local API bridge on \`http://localhost:51847\` as a fallback
 
-If the user refers to "the app" or "the current project", inspect Monet's live editor state before searching the surrounding filesystem.
+If the user refers to "the app" or "the current project", inspect Monet's live editor state with \`editorctl\` before searching the surrounding filesystem.
+Do not improvise localhost commands or endpoints when \`editorctl\` already supports the task.
 `
 }
 
@@ -146,19 +154,10 @@ Read \`MONET_AGENT_CONTEXT.md\` in this directory before operating on Monet.
 
 Use Monet's built-in control surface first:
 - \`editorctl\`
-- local API bridge on \`http://localhost:51847\`
+- MCP tools if available
+- only then the local API bridge on \`http://localhost:51847\` as a fallback
 
 Do not default to asking the user to click Import if you can import files yourself from an absolute path.
+Do not improvise raw localhost commands when \`editorctl\` already supports the operation.
 `
-}
-
-async function ensureFileIfMissing(filePath: string, contents: string): Promise<void> {
-  try {
-    await access(filePath, fsConstants.F_OK)
-    return
-  } catch {
-    // missing
-  }
-
-  await writeFile(filePath, contents, 'utf8')
 }

@@ -1,7 +1,7 @@
 {
   "name": "monet",
   "productName": "Monet",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "Het Patel",
   "description": "Electron video editor with terminal-first controls, transcription, embeddings, and export",
   "build": {
@@ -67,6 +67,7 @@
     "express": "^5.2.1",
     "lucide-react": "^0.462.0",
     "node-pty": "^1.1.0",
+    "openai": "^6.34.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",

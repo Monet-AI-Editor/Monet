@@ -42,9 +42,10 @@ export class TerminalService {
       ...options.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      FORCE_COLOR: '1',
       CLICOLOR: '1',
       CLICOLOR_FORCE: '1',
+      TERM_PROGRAM: 'Monet',
+      TERM_PROGRAM_VERSION: process.env.npm_package_version || '0.1.1',
       AI_VIDEO_EDITOR_ROOT: process.cwd()
     }
     delete env.NO_COLOR

@@ -13,6 +13,12 @@ export type EffectType =
   | 'text_overlay'
   | 'chroma_key'
   | 'mask_box'
+  | 'drop_shadow'
+  | 'glow'
+  | 'background_fill'
+  | 'gradient_fill'
+  | 'shape_overlay'
+  | 'reveal_wipe'
 export type TransitionType = 'crossfade' | 'dip_to_black' | 'wipe' | 'slide'
 export type KeyframeEasing = 'linear' | 'ease_in' | 'ease_out' | 'ease_in_out'
 
@@ -120,13 +126,15 @@ export interface SequenceRecord {
   name: string
   duration: number
   active: boolean
+  width: number
+  height: number
   tracks: TimelineTrackRecord[]
   markers: SequenceMarkerRecord[]
 }
 
 export interface EditorTaskRecord {
   id: string
-  type: 'transcribe' | 'embed' | 'proxy' | 'analyze' | 'rough_cut'
+  type: 'transcribe' | 'embed' | 'proxy' | 'analyze' | 'rough_cut' | 'generate'
   status: 'queued' | 'running' | 'done' | 'error'
   label: string
   progress: number

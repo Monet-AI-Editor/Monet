@@ -20,6 +20,8 @@ const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.aac', '.m4a', '.flac', '.ogg
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff', '.svg'])
 const DEFAULT_STILL_DURATION_SECONDS = 5
 const LEGACY_IMPORTED_MEDIA_DURATION_SECONDS = 12
+const DEFAULT_SEQUENCE_WIDTH = 1920
+const DEFAULT_SEQUENCE_HEIGHT = 1080
 
 const DEFAULT_SUMMARIES: Record<MediaType, string> = {
   video: 'Imported video asset. No transcript or scene analysis has been generated yet.',
@@ -183,12 +185,18 @@ function createTrack(kind: TimelineTrackRecord['kind'], index: number): Timeline
   }
 }
 
-function createEmptySequence(name: string): SequenceRecord {
+function createEmptySequence(
+  name: string,
+  width = DEFAULT_SEQUENCE_WIDTH,
+  height = DEFAULT_SEQUENCE_HEIGHT
+): SequenceRecord {
   return {
     id: createId('seq'),
     name,
     duration: 0,
     active: true,
+    width,
+    height,
     tracks: [createTrack('video', 1), createTrack('audio', 1), createTrack('caption', 1)],
     markers: []
   }
@@ -519,7 +527,7 @@ export class ProjectStore {
   }
 
   queueTask(params: {
-    type: 'transcribe' | 'embed' | 'proxy' | 'analyze' | 'rough_cut'
+    type: 'transcribe' | 'embed' | 'proxy' | 'analyze' | 'rough_cut' | 'generate'
     label: string
     assetId?: string
   }): import('../../shared/editor').EditorTaskRecord {
@@ -808,6 +816,14 @@ export class ProjectStore {
       return {
         ...sequence,
         active: sequence.id === desiredActiveSequenceId || (!desiredActiveSequenceId && index === 0),
+        width:
+          typeof sequence.width === 'number' && Number.isFinite(sequence.width) && sequence.width > 0
+            ? Math.round(sequence.width)
+            : DEFAULT_SEQUENCE_WIDTH,
+        height:
+          typeof sequence.height === 'number' && Number.isFinite(sequence.height) && sequence.height > 0
+            ? Math.round(sequence.height)
+            : DEFAULT_SEQUENCE_HEIGHT,
         tracks: normalizedTracks,
         markers: [...(sequence.markers ?? [])].sort((left, right) => left.time - right.time),
         duration
@@ -1014,9 +1030,9 @@ export class ProjectStore {
     throw new Error(`Clip ${clipId} not found`)
   }
 
-  createSequence(name: string): import('../../shared/editor').SequenceRecord {
+  createSequence(name: string, width = DEFAULT_SEQUENCE_WIDTH, height = DEFAULT_SEQUENCE_HEIGHT): import('../../shared/editor').SequenceRecord {
     this.captureHistory()
-    const seq = createEmptySequence(name)
+    const seq = createEmptySequence(name, width, height)
     this.project.sequences.push(seq)
     this.normalizeProject()
     this.touch()
@@ -1025,6 +1041,18 @@ export class ProjectStore {
       throw new Error('Sequence not found after creation.')
     }
     return structuredClone(created)
+  }
+
+  setSequenceSize(sequenceId: string | undefined, width: number, height: number): SequenceRecord {
+    this.captureHistory()
+    const target = sequenceId
+      ? this.project.sequences.find((sequence) => sequence.id === sequenceId)
+      : this.getActiveSequenceMutable()
+    if (!target) throw new Error('Sequence not found')
+    target.width = Math.max(16, Math.round(width))
+    target.height = Math.max(16, Math.round(height))
+    this.touch()
+    return structuredClone(target)
   }
 
   rippleDeleteClip(clipId: string): void {
@@ -1247,6 +1275,31 @@ export class ProjectStore {
             parameters: keyframe.parameters as Record<string, number | string | boolean>
           }))
           .sort((left, right) => left.time - right.time)
+
+        this.captureHistory()
+        this.touch()
+        return this.project
+      }
+    }
+
+    throw new Error(`Clip ${clipId} or effect ${effectId} not found`)
+  }
+
+  setClipEffectParameters(
+    clipId: string,
+    effectId: string,
+    parameters: Record<string, unknown>
+  ): EditorProjectRecord {
+    for (const seq of this.project.sequences) {
+      for (const track of seq.tracks) {
+        const clip = track.clips.find((c) => c.id === clipId)
+        const effect = clip?.effects?.find((item) => item.id === effectId)
+        if (!clip || !effect) continue
+
+        effect.parameters = {
+          ...effect.parameters,
+          ...(parameters as Record<string, number | string | boolean>)
+        }
 
         this.captureHistory()
         this.touch()

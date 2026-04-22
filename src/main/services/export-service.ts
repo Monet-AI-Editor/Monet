@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'child_process'
+import { existsSync } from 'fs'
 import { mkdtemp, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -35,8 +36,52 @@ const EXPORT_REFERENCE_SIZE = {
   height: 1080
 }
 
-function getScaleFilter(options: ExportOptions): string {
-  const { width, height } = RESOLUTION_SIZE[options.resolution]
+let resolvedFfmpegBinary: string | null = null
+
+function resolveFfmpegBinary(): string {
+  if (resolvedFfmpegBinary) return resolvedFfmpegBinary
+
+  const pathEntries = (process.env.PATH ?? '')
+    .split(':')
+    .filter(Boolean)
+
+  const candidates = [
+    'ffmpeg',
+    ...pathEntries.map((entry) => join(entry, 'ffmpeg')),
+    '/opt/homebrew/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+    '/usr/bin/ffmpeg'
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate === 'ffmpeg') continue
+    if (existsSync(candidate)) {
+      resolvedFfmpegBinary = candidate
+      return candidate
+    }
+  }
+
+  resolvedFfmpegBinary = 'ffmpeg'
+  return resolvedFfmpegBinary
+}
+
+type CanvasSize = {
+  width: number
+  height: number
+}
+
+function getSequenceCanvasSize(sequence: SequenceRecord, options: ExportOptions): CanvasSize {
+  const preset = RESOLUTION_SIZE[options.resolution]
+  const isPortrait = sequence.height > sequence.width
+  if (!isPortrait) return preset
+  return {
+    width: preset.height,
+    height: preset.width
+  }
+}
+
+function getScaleFilter(canvasSize: CanvasSize): string {
+  const { width, height } = canvasSize
   return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=24,setsar=1`
 }
 
@@ -48,15 +93,16 @@ async function runFfmpeg(
   } = {}
 ): Promise<void> {
   const { durationSeconds, onProgress } = options
+  const ffmpegBinary = resolveFfmpegBinary()
 
   if (!onProgress || !durationSeconds || durationSeconds <= 0) {
-    await execFileAsync('ffmpeg', args, { maxBuffer: 50 * 1024 * 1024 })
+    await execFileAsync(ffmpegBinary, args, { maxBuffer: 50 * 1024 * 1024 })
     return
   }
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
-      'ffmpeg',
+      ffmpegBinary,
       ['-progress', 'pipe:1', '-nostats', ...args],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     )
@@ -135,6 +181,32 @@ function escapeDrawtextText(value: string): string {
     .replace(/,/g, '\\,')
 }
 
+function escapeDrawtextOptionValue(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/:/g, '\\:')
+    .replace(/'/g, "\\'")
+    .replace(/,/g, '\\,')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+}
+
+function normalizeTextAlign(value: string | undefined): 'left' | 'center' | 'right' {
+  if (value === 'left' || value === 'right') return value
+  return 'center'
+}
+
+function buildDrawtextXExpression(textAlign: 'left' | 'center' | 'right', offsetExpr: string): string {
+  switch (textAlign) {
+    case 'left':
+      return `${offsetExpr}`
+    case 'right':
+      return `w-text_w-(${offsetExpr})`
+    default:
+      return `(w-text_w)/2+(${offsetExpr})`
+  }
+}
+
 function applyEasingExpression(progressExpr: string, easing?: Effect['keyframes'] extends Array<infer T> ? T['easing'] : never): string {
   switch (easing) {
     case 'ease_in':
@@ -194,6 +266,50 @@ function getStringKeyframeValue(effect: Effect | undefined, key: string, fallbac
   return fallback
 }
 
+function normalizeHexColor(value: string | undefined, fallback = '#ffffff'): string {
+  if (!value) return fallback
+  const trimmed = value.trim()
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase()
+  if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
+    return `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`.toLowerCase()
+  }
+  return fallback
+}
+
+function parseHexColor(value: string | undefined, fallback = '#ffffff'): { r: number; g: number; b: number } {
+  const normalized = normalizeHexColor(value, fallback)
+  return {
+    r: Number.parseInt(normalized.slice(1, 3), 16),
+    g: Number.parseInt(normalized.slice(3, 5), 16),
+    b: Number.parseInt(normalized.slice(5, 7), 16)
+  }
+}
+
+function ffmpegColorWithOpacity(value: string | undefined, opacity: number, fallback = '#ffffff'): string {
+  const normalized = normalizeHexColor(value, fallback)
+  return `${normalized}@${Math.max(0, Math.min(1, opacity))}`
+}
+
+function buildGradientSourceGraph(
+  outputLabel: string,
+  width: number,
+  height: number,
+  duration: number,
+  fromColor: string | undefined,
+  toColor: string | undefined,
+  angle: number,
+  opacity: number
+): string {
+  const from = parseHexColor(fromColor)
+  const to = parseHexColor(toColor)
+  const radians = (angle * Math.PI) / 180
+  const cos = Number(Math.cos(radians).toFixed(6))
+  const sin = Number(Math.sin(radians).toFixed(6))
+  const pointExpr = `max(0,min(1,0.5+(((X/W)-0.5)*${cos})+(((Y/H)-0.5)*${sin})))`
+
+  return `nullsrc=s=${width}x${height}:d=${duration},format=rgba,geq=r='${from.r}+(${to.r}-${from.r})*(${pointExpr})':g='${from.g}+(${to.g}-${from.g})*(${pointExpr})':b='${from.b}+(${to.b}-${from.b})*(${pointExpr})':a='255*${Math.max(0, Math.min(1, opacity))}'[${outputLabel}]`
+}
+
 function getOpacityAlphaFilters(effect: Effect | undefined): string[] {
   if (!effect) return []
   const keyframes = [...(effect.keyframes ?? [])]
@@ -225,16 +341,25 @@ function hasRenderedMotionEffects(clip: TimelineClipRecord): boolean {
   return (clip.effects ?? []).some(
     (effect) =>
       effect.enabled &&
-      (effect.type === 'transform' || effect.type === 'text_overlay' || effect.type === 'opacity')
+      (
+        effect.type === 'transform' ||
+        effect.type === 'text_overlay' ||
+        effect.type === 'opacity' ||
+        effect.type === 'drop_shadow' ||
+        effect.type === 'glow' ||
+        effect.type === 'background_fill' ||
+        effect.type === 'gradient_fill' ||
+        effect.type === 'shape_overlay'
+      )
   )
 }
 
 function buildRenderedVideoFilterScript(
   clip: TimelineClipRecord,
-  options: ExportOptions,
+  canvasSize: CanvasSize,
   effectsService: EffectsService
 ): string {
-  const { width, height } = RESOLUTION_SIZE[options.resolution]
+  const { width, height } = canvasSize
   const xScale = width / EXPORT_REFERENCE_SIZE.width
   const yScale = height / EXPORT_REFERENCE_SIZE.height
   const effects = clip.effects ?? []
@@ -246,7 +371,7 @@ function buildRenderedVideoFilterScript(
   if (clip.speed && clip.speed !== 1.0) {
     baseFilters.push(`setpts=${1 / clip.speed}*PTS`)
   }
-  baseFilters.push(getScaleFilter(options))
+  baseFilters.push(getScaleFilter(canvasSize))
   for (const effect of effects) {
     if (!effect.enabled) continue
     if (effect.type === 'speed_ramp' || effect.type === 'transform' || effect.type === 'opacity' || effect.type === 'text_overlay' || effect.type === 'blend_mode') {
@@ -289,6 +414,14 @@ function buildRenderedVideoFilterScript(
   )
   const scaledTextFontSizeExpr = `(${textFontSizeExpr})*${yScale}`
   const textValue = escapeDrawtextText(getStringKeyframeValue(textOverlayEffect, 'text', ''))
+  const textColor = normalizeHexColor(getStringKeyframeValue(textOverlayEffect, 'color', '#ffffff'))
+  const textAlign = normalizeTextAlign(getStringKeyframeValue(textOverlayEffect, 'textAlign', 'center'))
+  const textXPositionExpr = buildDrawtextXExpression(textAlign, textXExpr)
+  const textLineHeight = Math.max(0.7, Number(textOverlayEffect?.parameters.lineHeight ?? 1.05))
+  const textLineSpacing = Math.max(0, Number(textOverlayEffect?.parameters.fontSize ?? 64) * (textLineHeight - 1) * yScale)
+  const textStrokeWidth = Math.max(0, Number(textOverlayEffect?.parameters.strokeWidth ?? 0) * Math.min(xScale, yScale))
+  const textStrokeColor = normalizeHexColor(getStringKeyframeValue(textOverlayEffect, 'strokeColor', '#000000'))
+  const textFontFamily = getStringKeyframeValue(textOverlayEffect, 'fontFamily', '').trim()
   const alphaFilters = getOpacityAlphaFilters(opacityEffect)
 
   const lines = [
@@ -299,8 +432,33 @@ function buildRenderedVideoFilterScript(
   ]
 
   if (textValue.length > 0) {
+    const drawtextOptions = [
+      `text='${textValue}'`,
+      `x='${textXPositionExpr}'`,
+      `y='(h-text_h)/2+(${textYExpr})'`,
+      `fontsize='${scaledTextFontSizeExpr}'`,
+      `fontcolor=${textColor}`,
+      `alpha='${textOpacityExpr}'`,
+      `shadowcolor=black@0.55`,
+      'shadowx=0',
+      'shadowy=6',
+      'fix_bounds=1'
+    ]
+    if (textLineSpacing > 0) drawtextOptions.push(`line_spacing=${textLineSpacing}`)
+    if (textStrokeWidth > 0) {
+      drawtextOptions.push(`borderw=${textStrokeWidth}`)
+      drawtextOptions.push(`bordercolor=${textStrokeColor}`)
+    }
+    if (textFontFamily.length > 0) {
+      const escapedFont = escapeDrawtextOptionValue(textFontFamily)
+      if (textFontFamily.startsWith('/')) {
+        drawtextOptions.push(`fontfile='${escapedFont}'`)
+      } else {
+        drawtextOptions.push(`font='${escapedFont}'`)
+      }
+    }
     lines.push(
-      `[composite]drawtext=text='${textValue}':x='(w-text_w)/2+(${textXExpr})':y='(h-text_h)/2+(${textYExpr})':fontsize='${scaledTextFontSizeExpr}':fontcolor=white:alpha='${textOpacityExpr}':shadowcolor=black@0.55:shadowx=0:shadowy=6[v]`
+      `[composite]drawtext=${drawtextOptions.join(':')}[v]`
     )
   } else {
     lines.push('[composite]null[v]')
@@ -402,8 +560,8 @@ function buildTimelineIntervals(project: EditorProjectRecord, sequence: Sequence
   return intervals
 }
 
-async function createGapSegment(segmentPath: string, duration: number, options: ExportOptions): Promise<void> {
-  const { width, height } = RESOLUTION_SIZE[options.resolution]
+async function createGapSegment(segmentPath: string, duration: number, options: ExportOptions, canvasSize: CanvasSize): Promise<void> {
+  const { width, height } = canvasSize
   const quality = QUALITY_PRESETS[options.quality]
   await runFfmpeg([
     '-y',
@@ -421,6 +579,7 @@ async function createImageSegment(
   asset: MediaAssetRecord,
   duration: number,
   options: ExportOptions,
+  canvasSize: CanvasSize,
   onProgress?: (progress: number) => void
 ): Promise<void> {
   const quality = QUALITY_PRESETS[options.quality]
@@ -429,7 +588,7 @@ async function createImageSegment(
     '-loop', '1', '-i', asset.path,
     '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
     '-t', `${duration}`,
-    '-vf', getScaleFilter(options),
+    '-vf', getScaleFilter(canvasSize),
     '-shortest',
     '-c:v', 'libx264', '-preset', quality.preset, '-crf', String(quality.crf), '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', quality.audioBitrate,
@@ -443,6 +602,7 @@ async function createVideoSegment(
   clip: TimelineClipRecord,
   effectsService: EffectsService,
   options: ExportOptions,
+  canvasSize: CanvasSize,
   onProgress?: (progress: number) => void
 ): Promise<void> {
   const quality = QUALITY_PRESETS[options.quality]
@@ -450,7 +610,7 @@ async function createVideoSegment(
   if (hasRenderedMotionEffects(clip)) {
     const workDir = await mkdtemp(join(tmpdir(), 'ai-video-editor-export-filter-'))
     const scriptPath = join(workDir, `${clip.id}-filter-complex.txt`)
-    const filterScript = buildRenderedVideoFilterScript(clip, options, effectsService)
+    const filterScript = buildRenderedVideoFilterScript(clip, canvasSize, effectsService)
     await writeFile(scriptPath, filterScript, 'utf8')
 
     const audioFilterParts: string[] = []
@@ -499,7 +659,7 @@ async function createVideoSegment(
     videoFilterParts.push(`setpts=${1 / clip.speed}*PTS`)
   }
 
-  videoFilterParts.push(getScaleFilter(options))
+  videoFilterParts.push(getScaleFilter(canvasSize))
 
   if (clip.effects && clip.effects.length > 0) {
     for (const effect of clip.effects) {
@@ -561,9 +721,10 @@ async function createAudioOnlySegment(
   asset: MediaAssetRecord,
   clip: TimelineClipRecord,
   options: ExportOptions,
+  canvasSize: CanvasSize,
   onProgress?: (progress: number) => void
 ): Promise<void> {
-  const { width, height } = RESOLUTION_SIZE[options.resolution]
+  const { width, height } = canvasSize
   const quality = QUALITY_PRESETS[options.quality]
   const audioFilterParts: string[] = []
   if (clip.volume !== undefined && clip.volume !== 1.0)
@@ -615,10 +776,11 @@ function buildLayerCanvasFilter(
   duration: number,
   clipLocalOffset: number,
   options: ExportOptions,
+  canvasSize: CanvasSize,
   effectsService: EffectsService,
   layerIndex: number
 ): string[] {
-  const { width, height } = RESOLUTION_SIZE[options.resolution]
+  const { width, height } = canvasSize
   const xScale = width / EXPORT_REFERENCE_SIZE.width
   const yScale = height / EXPORT_REFERENCE_SIZE.height
   const effects = clip.effects ?? []
@@ -627,15 +789,20 @@ function buildLayerCanvasFilter(
   const textOverlayEffect = effects.find((effect) => effect.enabled && effect.type === 'text_overlay')
   const chromaKeyEffect = effects.find((effect) => effect.enabled && effect.type === 'chroma_key')
   const maskBoxEffect = effects.find((effect) => effect.enabled && effect.type === 'mask_box')
+  const dropShadowEffect = effects.find((effect) => effect.enabled && effect.type === 'drop_shadow')
+  const glowEffect = effects.find((effect) => effect.enabled && effect.type === 'glow')
+  const backgroundFillEffect = effects.find((effect) => effect.enabled && effect.type === 'background_fill')
+  const gradientFillEffect = effects.find((effect) => effect.enabled && effect.type === 'gradient_fill')
+  const shapeOverlayEffects = effects.filter((effect) => effect.enabled && effect.type === 'shape_overlay')
 
   const baseFilters: string[] = []
   if (clip.speed && clip.speed !== 1.0) {
     baseFilters.push(`setpts=${1 / clip.speed}*PTS`)
   }
-  baseFilters.push(getScaleFilter(options))
+  baseFilters.push(getScaleFilter(canvasSize))
   for (const effect of effects) {
     if (!effect.enabled) continue
-    if (['speed_ramp', 'transform', 'opacity', 'text_overlay', 'blend_mode', 'chroma_key', 'mask_box'].includes(effect.type)) {
+    if (['speed_ramp', 'transform', 'opacity', 'text_overlay', 'blend_mode', 'chroma_key', 'mask_box', 'drop_shadow', 'glow', 'background_fill', 'gradient_fill', 'shape_overlay'].includes(effect.type)) {
       continue
     }
     const filter = effectsService.getEffectFilter({
@@ -684,26 +851,122 @@ function buildLayerCanvasFilter(
   )
   const scaledTextFontSizeExpr = `(${textFontSizeExpr})*${yScale}`
   const textValue = escapeDrawtextText(getStringKeyframeValue(textOverlayEffect, 'text', ''))
+  const textColor = normalizeHexColor(getStringKeyframeValue(textOverlayEffect, 'color', '#ffffff'))
+  const textAlign = normalizeTextAlign(getStringKeyframeValue(textOverlayEffect, 'textAlign', 'center'))
+  const textXPositionExpr = buildDrawtextXExpression(textAlign, textXExpr)
+  const textLineHeight = Math.max(0.7, Number(textOverlayEffect?.parameters.lineHeight ?? 1.05))
+  const textLineSpacing = Math.max(0, Number(textOverlayEffect?.parameters.fontSize ?? 64) * (textLineHeight - 1) * yScale)
+  const textStrokeWidth = Math.max(0, Number(textOverlayEffect?.parameters.strokeWidth ?? 0) * Math.min(xScale, yScale))
+  const textStrokeColor = normalizeHexColor(getStringKeyframeValue(textOverlayEffect, 'strokeColor', '#000000'))
+  const textFontFamily = getStringKeyframeValue(textOverlayEffect, 'fontFamily', '').trim()
   const alphaFilters = getOpacityAlphaFilters(opacityEffect)
   const chromaColor = String(chromaKeyEffect?.parameters.color ?? '#00ff00').replace('#', '0x')
   const chromaSimilarity = Number(chromaKeyEffect?.parameters.similarity ?? 0.18)
   const chromaBlend = Number(chromaKeyEffect?.parameters.blend ?? 0.08)
-  const maskX = Number(maskBoxEffect?.parameters.x ?? 0)
-  const maskY = Number(maskBoxEffect?.parameters.y ?? 0)
-  const maskWidth = Number(maskBoxEffect?.parameters.width ?? width)
-  const maskHeight = Number(maskBoxEffect?.parameters.height ?? height)
+  const maskX = Number(maskBoxEffect?.parameters.x ?? 0) * xScale
+  const maskY = Number(maskBoxEffect?.parameters.y ?? 0) * yScale
+  const maskWidth = Number(maskBoxEffect?.parameters.width ?? EXPORT_REFERENCE_SIZE.width) * xScale
+  const maskHeight = Number(maskBoxEffect?.parameters.height ?? EXPORT_REFERENCE_SIZE.height) * yScale
+  const dropShadowColor = parseHexColor(typeof dropShadowEffect?.parameters.color === 'string' ? String(dropShadowEffect.parameters.color) : undefined, '#000000')
+  const dropShadowOpacity = Math.max(0, Math.min(1, Number(dropShadowEffect?.parameters.opacity ?? 0.45)))
+  const dropShadowBlur = Math.max(0, Number(dropShadowEffect?.parameters.blur ?? 18))
+  const dropShadowOffsetX = Number(dropShadowEffect?.parameters.offsetX ?? 0) * xScale
+  const dropShadowOffsetY = Number(dropShadowEffect?.parameters.offsetY ?? 10) * yScale
+  const glowColor = parseHexColor(typeof glowEffect?.parameters.color === 'string' ? String(glowEffect.parameters.color) : undefined, '#ffffff')
+  const glowOpacity = Math.max(0, Math.min(1, Number(glowEffect?.parameters.opacity ?? 0.35)))
+  const glowRadius = Math.max(0, Number(glowEffect?.parameters.radius ?? 18))
+  const backgroundFillColor = ffmpegColorWithOpacity(
+    typeof backgroundFillEffect?.parameters.color === 'string' ? String(backgroundFillEffect.parameters.color) : undefined,
+    Number(backgroundFillEffect?.parameters.opacity ?? 1),
+    '#000000'
+  )
 
   const lines = [
     `${inputLabel}${effectsService.combineFilters(baseFilters)},format=rgba${chromaKeyEffect ? `,colorkey=${chromaColor}:${chromaSimilarity}:${chromaBlend}` : ''}[src${layerIndex}]`,
-    `color=c=black@0:s=${width}x${height}:r=24:d=${duration},format=rgba[blank${layerIndex}]`,
+    `color=c=${backgroundFillEffect ? backgroundFillColor : 'black@0'}:s=${width}x${height}:r=24:d=${duration},format=rgba[blank${layerIndex}]`,
     `[src${layerIndex}]scale=w='max(2,trunc(iw*(${scaleXExpr})/2)*2)':h='max(2,trunc(ih*(${scaleYExpr})/2)*2)':eval=frame,rotate='(${rotationExpr})*PI/180':c=black@0:ow=rotw(iw):oh=roth(ih)${alphaFilters.length > 0 ? `,${alphaFilters.join(',')}` : ''}[fg${layerIndex}]`,
-    `[blank${layerIndex}][fg${layerIndex}]overlay=x='(W-w)/2+(${transformXExpr})':y='(H-h)/2+(${transformYExpr})':eval=frame[layer${layerIndex}base]`
   ]
 
-  let currentLabel = `layer${layerIndex}base`
-  if (textValue.length > 0) {
+  let baseCanvasLabel = `blank${layerIndex}`
+  if (gradientFillEffect) {
+    const gradientLabel = `gradient${layerIndex}`
     lines.push(
-      `[${currentLabel}]drawtext=text='${textValue}':x='(w-text_w)/2+(${textXExpr})':y='(h-text_h)/2+(${textYExpr})':fontsize='${scaledTextFontSizeExpr}':fontcolor=white:alpha='${textOpacityExpr}':shadowcolor=black@0.55:shadowx=0:shadowy=6[layer${layerIndex}text]`
+      buildGradientSourceGraph(
+        gradientLabel,
+        width,
+        height,
+        duration,
+        typeof gradientFillEffect.parameters.fromColor === 'string' ? String(gradientFillEffect.parameters.fromColor) : '#ffffff',
+        typeof gradientFillEffect.parameters.toColor === 'string' ? String(gradientFillEffect.parameters.toColor) : '#ffffff',
+        Number(gradientFillEffect.parameters.angle ?? 135),
+        Number(gradientFillEffect.parameters.opacity ?? 1)
+      ),
+      `[${baseCanvasLabel}][${gradientLabel}]overlay=x=0:y=0:format=auto[basegrad${layerIndex}]`
+    )
+    baseCanvasLabel = `basegrad${layerIndex}`
+  }
+
+  lines.push(
+    `[${baseCanvasLabel}][fg${layerIndex}]overlay=x='(W-w)/2+(${transformXExpr})':y='(H-h)/2+(${transformYExpr})':eval=frame[layer${layerIndex}base]`
+  )
+
+  let currentLabel = `layer${layerIndex}base`
+  for (const shapeEffect of shapeOverlayEffects) {
+    const shape = getStringKeyframeValue(shapeEffect, 'shape', 'rect')
+    const shapeColor = ffmpegColorWithOpacity(
+      getStringKeyframeValue(shapeEffect, 'color', '#ffffff'),
+      Number(shapeEffect.parameters.opacity ?? 1),
+      '#ffffff'
+    )
+    const xExpr = `(${buildClipScopedNumericExpression(shapeEffect, 'x', Number(shapeEffect.parameters.x ?? 0), clipLocalOffset)})*${xScale}`
+    const yExpr = `(${buildClipScopedNumericExpression(shapeEffect, 'y', Number(shapeEffect.parameters.y ?? 0), clipLocalOffset)})*${yScale}`
+    const widthExpr = `(${buildClipScopedNumericExpression(shapeEffect, 'width', Number(shapeEffect.parameters.width ?? 320), clipLocalOffset)})*${xScale}`
+    const heightExpr = `(${buildClipScopedNumericExpression(shapeEffect, 'height', Number(shapeEffect.parameters.height ?? 180), clipLocalOffset)})*${yScale}`
+    const strokeWidth = Math.max(0, Number(shapeEffect.parameters.strokeWidth ?? 0))
+    const scaledStrokeWidth = Math.max(1, strokeWidth * Math.min(xScale, yScale))
+    const boxThickness =
+      shape === 'line'
+        ? width >= height
+          ? `max(1,${scaledStrokeWidth})`
+          : `max(1,${scaledStrokeWidth})`
+        : strokeWidth > 0
+          ? `${scaledStrokeWidth}`
+          : 'fill'
+
+    lines.push(
+      `[${currentLabel}]drawbox=x='${xExpr}':y='${yExpr}':w='${shape === 'line' && Number(shapeEffect.parameters.width ?? 320) >= Number(shapeEffect.parameters.height ?? 12) ? widthExpr : shape === 'line' ? `${scaledStrokeWidth}` : widthExpr}':h='${shape === 'line' && Number(shapeEffect.parameters.width ?? 320) >= Number(shapeEffect.parameters.height ?? 12) ? `${scaledStrokeWidth}` : heightExpr}':color=${shapeColor}:t=${boxThickness}[shape${layerIndex}_${shapeEffect.id}]`
+    )
+    currentLabel = `shape${layerIndex}_${shapeEffect.id}`
+  }
+
+  if (textValue.length > 0) {
+    const drawtextOptions = [
+      `text='${textValue}'`,
+      `x='${textXPositionExpr}'`,
+      `y='(h-text_h)/2+(${textYExpr})'`,
+      `fontsize='${scaledTextFontSizeExpr}'`,
+      `fontcolor=${textColor}`,
+      `alpha='${textOpacityExpr}'`,
+      `shadowcolor=black@0.55`,
+      'shadowx=0',
+      'shadowy=6',
+      'fix_bounds=1'
+    ]
+    if (textLineSpacing > 0) drawtextOptions.push(`line_spacing=${textLineSpacing}`)
+    if (textStrokeWidth > 0) {
+      drawtextOptions.push(`borderw=${textStrokeWidth}`)
+      drawtextOptions.push(`bordercolor=${textStrokeColor}`)
+    }
+    if (textFontFamily.length > 0) {
+      const escapedFont = escapeDrawtextOptionValue(textFontFamily)
+      if (textFontFamily.startsWith('/')) {
+        drawtextOptions.push(`fontfile='${escapedFont}'`)
+      } else {
+        drawtextOptions.push(`font='${escapedFont}'`)
+      }
+    }
+    lines.push(
+      `[${currentLabel}]drawtext=${drawtextOptions.join(':')}[layer${layerIndex}text]`
     )
     currentLabel = `layer${layerIndex}text`
   }
@@ -715,6 +978,28 @@ function buildLayerCanvasFilter(
     currentLabel = `layer${layerIndex}masked`
   }
 
+  if (dropShadowEffect) {
+    lines.push(
+      `[${currentLabel}]split[layer${layerIndex}keep][layer${layerIndex}shadowsrc]`,
+      `[layer${layerIndex}shadowsrc]lutrgb=r='val*0+${dropShadowColor.r}':g='val*0+${dropShadowColor.g}':b='val*0+${dropShadowColor.b}',colorchannelmixer=aa=${dropShadowOpacity},gblur=sigma=${dropShadowBlur}[layer${layerIndex}shadow]`,
+      `color=c=black@0:s=${width}x${height}:r=24:d=${duration},format=rgba[layer${layerIndex}shadowblank]`,
+      `[layer${layerIndex}shadowblank][layer${layerIndex}shadow]overlay=x=${dropShadowOffsetX}:y=${dropShadowOffsetY}:format=auto[layer${layerIndex}shadowcomp]`,
+      `[layer${layerIndex}shadowcomp][layer${layerIndex}keep]overlay=x=0:y=0:format=auto[layer${layerIndex}shadowed]`
+    )
+    currentLabel = `layer${layerIndex}shadowed`
+  }
+
+  if (glowEffect) {
+    lines.push(
+      `[${currentLabel}]split[layer${layerIndex}glowkeep][layer${layerIndex}glowsrc]`,
+      `[layer${layerIndex}glowsrc]lutrgb=r='val*0+${glowColor.r}':g='val*0+${glowColor.g}':b='val*0+${glowColor.b}',colorchannelmixer=aa=${glowOpacity},gblur=sigma=${glowRadius}[layer${layerIndex}glow]`,
+      `color=c=black@0:s=${width}x${height}:r=24:d=${duration},format=rgba[layer${layerIndex}glowblank]`,
+      `[layer${layerIndex}glowblank][layer${layerIndex}glow]overlay=x=0:y=0:format=auto[layer${layerIndex}glowcomp]`,
+      `[layer${layerIndex}glowcomp][layer${layerIndex}glowkeep]overlay=x=0:y=0:format=auto[layer${layerIndex}glowed]`
+    )
+    currentLabel = `layer${layerIndex}glowed`
+  }
+
   lines.push(`[${currentLabel}]null[${outputLabel}]`)
   return lines
 }
@@ -723,10 +1008,11 @@ async function createCompositeSegment(
   segmentPath: string,
   interval: TimelineInterval,
   options: ExportOptions,
+  canvasSize: CanvasSize,
   effectsService: EffectsService,
   onProgress?: (progress: number) => void
 ): Promise<void> {
-  const { width, height } = RESOLUTION_SIZE[options.resolution]
+  const { width, height } = canvasSize
   const quality = QUALITY_PRESETS[options.quality]
   const workDir = await mkdtemp(join(tmpdir(), 'ai-video-editor-export-composite-'))
   const scriptPath = join(workDir, `composite-${interval.start.toFixed(3)}.txt`)
@@ -750,7 +1036,7 @@ async function createCompositeSegment(
 
     const layerLabel = `layer${layerIndex}`
     filterLines.push(
-      ...buildLayerCanvasFilter(`[${inputIndex}:v]`, layerLabel, layer.clip, interval.duration, clipOffset, options, effectsService, layerIndex)
+      ...buildLayerCanvasFilter(`[${inputIndex}:v]`, layerLabel, layer.clip, interval.duration, clipOffset, options, canvasSize, effectsService, layerIndex)
     )
 
     const blendModeEffect = (layer.clip.effects ?? []).find((effect) => effect.enabled && effect.type === 'blend_mode')
@@ -846,6 +1132,7 @@ export class ExportService {
   ): Promise<ExportResult> {
     const project = this.projectStore.getProject()
     const sequence = getActiveSequence(project)
+    const canvasSize = getSequenceCanvasSize(sequence, options)
     const intervals = buildTimelineIntervals(project, sequence)
     if (intervals.length === 0) {
       throw new Error('The active sequence has no media to export.')
@@ -895,13 +1182,13 @@ export class ExportService {
       if (interval.start > currentTime + 0.05) {
         const gapDuration = interval.start - currentTime
         const gapPath = join(workDir, `gap-${index}.mp4`)
-        await createGapSegment(gapPath, gapDuration, options)
+        await createGapSegment(gapPath, gapDuration, options, canvasSize)
         concatEntries.push(`file '${gapPath.replace(/'/g, "\\'")}'`)
         currentTime += gapDuration
       }
 
       const segPath = join(workDir, `seg-${index}.mp4`)
-      await createCompositeSegment(segPath, interval, options, this.effectsService, (segmentProgress) => {
+      await createCompositeSegment(segPath, interval, options, canvasSize, this.effectsService, (segmentProgress) => {
         const interpolated =
           intervalStartProgress + (intervalEndProgress - intervalStartProgress) * Math.max(0, Math.min(1, segmentProgress))
         onProgress?.({

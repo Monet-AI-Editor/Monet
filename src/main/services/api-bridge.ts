@@ -8,12 +8,52 @@ import type { EmbeddingService } from './embedding-service'
 import type { ExportService } from './export-service'
 import type { FrameExtractionService } from './frame-extraction-service'
 import type { ControlStateService } from './control-state-service'
+import type { ImageGenerationService } from './image-generation-service'
 import type { MediaAssetRecord } from '../../shared/editor'
 import { searchSegments, searchSegmentsWithVectors, semanticSearch, semanticSearchWithVectors } from './semantic-index'
+import { dirname, join } from 'path'
+import { homedir } from 'os'
 
 export class APIBridge {
   private server: Server | null = null
   private readonly PORT = 51847
+
+  private buildStateSnapshot(): {
+    playheadTime: number
+    selectedClipId: string | null
+    selectedAssetId: string | null
+    activeSequenceId: string | null
+    projectId: string
+    projectName: string
+    sequences: Array<{
+      id: string
+      name: string
+      active: boolean
+      width: number | null
+      height: number | null
+      trackCount: number
+      clipCount: number
+      markerCount: number
+    }>
+  } {
+    const controlState = this.controlStateService.getState()
+    const project = this.projectStore.getProject()
+    return {
+      ...controlState,
+      projectId: project.id,
+      projectName: project.name,
+      sequences: project.sequences.map((sequence) => ({
+        id: sequence.id,
+        name: sequence.name,
+        active: sequence.active,
+        width: sequence.width ?? null,
+        height: sequence.height ?? null,
+        trackCount: sequence.tracks.length,
+        clipCount: sequence.tracks.reduce((count, track) => count + track.clips.length, 0),
+        markerCount: sequence.markers.length
+      }))
+    }
+  }
 
   private safeSendToAll(channel: string, payload: unknown): void {
     for (const win of BrowserWindow.getAllWindows()) {
@@ -33,7 +73,8 @@ export class APIBridge {
     private readonly controlStateService: ControlStateService,
     private readonly embeddingService?: EmbeddingService,
     private readonly exportService?: ExportService,
-    private readonly frameExtractionService?: FrameExtractionService
+    private readonly frameExtractionService?: FrameExtractionService,
+    private readonly imageGenerationService?: ImageGenerationService
   ) {}
 
   start(): void {
@@ -50,12 +91,16 @@ export class APIBridge {
       if (req.method === 'GET') {
         try {
           const path = typeof req.url === 'string' ? req.url.split('?')[0] : '/'
+          const sequenceMatch = path.match(/^\/sequences\/([^/]+)$/)
           const command =
             path === '/' ? 'help'
             : path === '/state' ? 'get_control_state'
+            : path === '/project' ? 'get_project'
+            : path === '/settings' ? 'get_settings'
             : path === '/assets' ? 'list_assets'
             : path === '/sequences' ? 'list_sequences'
             : path === '/help' ? 'help'
+            : sequenceMatch ? 'get_sequence'
             : null
 
           if (!command) {
@@ -64,7 +109,8 @@ export class APIBridge {
             return
           }
 
-          const result = await this.handleCommand(command, {})
+          const args = sequenceMatch ? { sequenceId: decodeURIComponent(sequenceMatch[1] ?? '') } : {}
+          const result = await this.handleCommand(command, args)
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ success: true, result }))
           return
@@ -80,7 +126,12 @@ export class APIBridge {
       req.on('end', async () => {
         try {
           const data = body ? JSON.parse(body) : {}
-          const result = await this.handleCommand(data.command, data.args ?? {})
+          const args = data.args && typeof data.args === 'object'
+            ? data.args
+            : Object.fromEntries(
+                Object.entries(data).filter(([key]) => key !== 'command')
+              )
+          const result = await this.handleCommand(data.command, args)
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ success: true, result }))
         } catch (error) {
@@ -182,6 +233,215 @@ export class APIBridge {
         assetId,
         segmentVectors.map((result) => ({ segmentId: result.segmentId, vector: result.vector }))
       )
+    }
+  }
+
+  private resolveGeneratedAssetsDirectory(): string {
+    const projectPath = this.projectStore.getProjectFilePath()
+    if (projectPath) return join(dirname(projectPath), 'Generated Assets')
+    return join(homedir(), 'Documents', 'Monet', 'Generated Assets')
+  }
+
+  private async generateImageAsset(args: {
+    prompt?: string
+    size?: string
+    quality?: string
+    background?: string
+    format?: string
+    moderation?: string
+    outputCompression?: number
+    partialImages?: number
+  }): Promise<{
+    asset: MediaAssetRecord
+    outputPath: string
+    partialImagePaths: string[]
+    revisedPrompt?: string
+    model: string
+    size: string
+    quality: string
+    background: string
+    format: string
+    moderation: string
+    outputCompression?: number
+    partialImages: number
+  }> {
+    if (!this.imageGenerationService) throw new Error('Image generation service not initialized')
+    if (!args.prompt || !String(args.prompt).trim()) throw new Error('prompt required')
+
+    const settings = await this.settingsStore.getSettings()
+    const apiKey = settings.apiKeys.openai
+    if (!apiKey) throw new Error('OpenAI API key not configured')
+
+    this.imageGenerationService.setApiKey(apiKey)
+    const task = this.projectStore.queueTask({
+      type: 'generate',
+      label: 'Generating image'
+    })
+
+    try {
+      this.projectStore.updateTask(task.id, {
+        status: 'running',
+        progress: 0.1,
+        label: 'Generating image'
+      })
+      this.pushProjectUpdate()
+
+      const generated = await this.imageGenerationService.generateImage({
+        prompt: String(args.prompt),
+        outputDir: this.resolveGeneratedAssetsDirectory(),
+        size: args.size as any,
+        quality: args.quality as any,
+        background: args.background as any,
+        format: args.format as any,
+        moderation: args.moderation as any,
+        outputCompression: typeof args.outputCompression === 'number' ? args.outputCompression : undefined,
+        partialImages: typeof args.partialImages === 'number' ? args.partialImages : undefined
+      })
+
+      this.projectStore.updateTask(task.id, {
+        status: 'running',
+        progress: 0.85,
+        label: 'Importing generated image'
+      })
+
+      const [asset] = this.projectStore.importFiles([generated.outputPath])
+      await this.maybeEmbedAsset(asset.id)
+
+      this.projectStore.updateTask(task.id, {
+        status: 'done',
+        progress: 1,
+        label: `Generated ${asset.name}`
+      })
+      this.pushProjectUpdate()
+
+      return {
+        asset,
+        outputPath: generated.outputPath,
+        partialImagePaths: generated.partialImagePaths,
+        revisedPrompt: generated.revisedPrompt,
+        model: generated.model,
+        size: generated.size,
+        quality: generated.quality,
+        background: generated.background,
+        format: generated.format,
+        moderation: generated.moderation,
+        outputCompression: generated.outputCompression,
+        partialImages: generated.partialImages
+      }
+    } catch (error) {
+      this.projectStore.updateTask(task.id, {
+        status: 'error',
+        progress: 1,
+        label: `Image generation failed: ${error instanceof Error ? error.message : 'unknown error'}`
+      })
+      this.pushProjectUpdate()
+      throw error
+    }
+  }
+
+  private resolveImageInputPath(value: string): string {
+    const asset = this.projectStore.getProject().assets.find((item) => item.id === value)
+    if (asset) return asset.path
+    return value
+  }
+
+  private async editImageAsset(args: {
+    prompt?: string
+    inputs?: string[]
+    size?: string
+    quality?: string
+    background?: string
+    format?: string
+    outputCompression?: number
+    partialImages?: number
+    inputFidelity?: string
+    mask?: string
+  }): Promise<{
+    asset: MediaAssetRecord
+    outputPath: string
+    partialImagePaths: string[]
+    model: string
+    size: string
+    quality: string
+    background: string
+    format: string
+    outputCompression?: number
+    partialImages: number
+    inputFidelity?: string
+  }> {
+    if (!this.imageGenerationService) throw new Error('Image generation service not initialized')
+    if (!args.prompt || !String(args.prompt).trim()) throw new Error('prompt required')
+    if (!args.inputs || args.inputs.length === 0) throw new Error('at least one input image is required')
+
+    const settings = await this.settingsStore.getSettings()
+    const apiKey = settings.apiKeys.openai
+    if (!apiKey) throw new Error('OpenAI API key not configured')
+
+    this.imageGenerationService.setApiKey(apiKey)
+    const task = this.projectStore.queueTask({
+      type: 'generate',
+      label: 'Editing image'
+    })
+
+    try {
+      this.projectStore.updateTask(task.id, {
+        status: 'running',
+        progress: 0.1,
+        label: 'Editing image'
+      })
+      this.pushProjectUpdate()
+
+      const edited = await this.imageGenerationService.editImage({
+        prompt: String(args.prompt),
+        inputPaths: args.inputs.map((input) => this.resolveImageInputPath(String(input))),
+        outputDir: this.resolveGeneratedAssetsDirectory(),
+        size: args.size as any,
+        quality: args.quality as any,
+        background: args.background as any,
+        format: args.format as any,
+        outputCompression: typeof args.outputCompression === 'number' ? args.outputCompression : undefined,
+        partialImages: typeof args.partialImages === 'number' ? args.partialImages : undefined,
+        inputFidelity: args.inputFidelity as any,
+        maskPath: args.mask ? this.resolveImageInputPath(String(args.mask)) : undefined
+      })
+
+      this.projectStore.updateTask(task.id, {
+        status: 'running',
+        progress: 0.85,
+        label: 'Importing edited image'
+      })
+
+      const [asset] = this.projectStore.importFiles([edited.outputPath])
+      await this.maybeEmbedAsset(asset.id)
+
+      this.projectStore.updateTask(task.id, {
+        status: 'done',
+        progress: 1,
+        label: `Edited ${asset.name}`
+      })
+      this.pushProjectUpdate()
+
+      return {
+        asset,
+        outputPath: edited.outputPath,
+        partialImagePaths: edited.partialImagePaths,
+        model: edited.model,
+        size: edited.size,
+        quality: edited.quality,
+        background: edited.background,
+        format: edited.format,
+        outputCompression: edited.outputCompression,
+        partialImages: edited.partialImages,
+        inputFidelity: edited.inputFidelity
+      }
+    } catch (error) {
+      this.projectStore.updateTask(task.id, {
+        status: 'error',
+        progress: 1,
+        label: `Image edit failed: ${error instanceof Error ? error.message : 'unknown error'}`
+      })
+      this.pushProjectUpdate()
+      throw error
     }
   }
 
@@ -287,6 +547,7 @@ export class APIBridge {
       : command === 'remove-clip' ? 'remove_clip'
       : command === 'add-track' ? 'add_track'
       : command === 'activate-sequence' ? 'activate_sequence'
+      : command === 'set-sequence-size' ? 'set_sequence_size'
       : command === 'add-marker' ? 'add_marker'
       : command === 'remove-marker' ? 'remove_marker'
       : command === 'set-playhead' ? 'set_playhead'
@@ -312,6 +573,8 @@ export class APIBridge {
       : command === 'search-segments' ? 'search_segments'
       : command === 'extract-frames' ? 'extract_frames'
       : command === 'create-contact-sheet' ? 'create_contact_sheet'
+      : command === 'generate-image' ? 'generate_image'
+      : command === 'edit-image' ? 'edit_image'
       : command === 'export-sequence' ? 'export_sequence'
       : command
 
@@ -330,11 +593,11 @@ export class APIBridge {
             'ping', 'help', 'get_project', 'get_settings',
             'get_control_state', 'set_playhead', 'select_clip', 'select_asset',
             // Assets & Search
-            'list_assets', 'get_asset', 'import_files', 'transcribe_asset', 'embed_assets',
+            'list_assets', 'get_asset', 'import_files', 'transcribe_asset', 'embed_assets', 'generate_image', 'edit_image',
             'search_media', 'search_spoken', 'get_asset_segments', 'search_segments',
             'extract_frames', 'create_contact_sheet',
             // Sequences
-            'list_sequences', 'create_sequence', 'activate_sequence', 'list_markers', 'add_marker', 'remove_marker',
+            'list_sequences', 'create_sequence', 'activate_sequence', 'set_sequence_size', 'list_markers', 'add_marker', 'remove_marker',
             // Export
             'export_sequence',
             // Tracks
@@ -362,7 +625,7 @@ export class APIBridge {
       }
 
       case 'get_control_state':
-        return this.controlStateService.getState()
+        return this.buildStateSnapshot()
 
       case 'set_playhead': {
         if (args.time == null) throw new Error('time required')
@@ -569,6 +832,32 @@ export class APIBridge {
         }
       }
 
+      case 'generate_image':
+        return this.generateImageAsset({
+          prompt: args.prompt ? String(args.prompt) : undefined,
+          size: args.size ? String(args.size) : undefined,
+          quality: args.quality ? String(args.quality) : undefined,
+          background: args.background ? String(args.background) : undefined,
+          format: args.format ? String(args.format) : undefined,
+          moderation: args.moderation ? String(args.moderation) : undefined,
+          outputCompression: typeof args.outputCompression === 'number' ? args.outputCompression : undefined,
+          partialImages: typeof args.partialImages === 'number' ? args.partialImages : undefined
+        })
+
+      case 'edit_image':
+        return this.editImageAsset({
+          prompt: args.prompt ? String(args.prompt) : undefined,
+          inputs: Array.isArray(args.inputs) ? args.inputs.map((item) => String(item)) : undefined,
+          size: args.size ? String(args.size) : undefined,
+          quality: args.quality ? String(args.quality) : undefined,
+          background: args.background ? String(args.background) : undefined,
+          format: args.format ? String(args.format) : undefined,
+          outputCompression: typeof args.outputCompression === 'number' ? args.outputCompression : undefined,
+          partialImages: typeof args.partialImages === 'number' ? args.partialImages : undefined,
+          inputFidelity: args.inputFidelity ? String(args.inputFidelity) : undefined,
+          mask: args.mask ? String(args.mask) : undefined
+        })
+
       case 'export_sequence': {
         if (!this.exportService) throw new Error('Export service not initialized')
         if (!args.outputPath) throw new Error('outputPath required')
@@ -583,9 +872,20 @@ export class APIBridge {
       case 'list_sequences':
         return this.projectStore.getProject().sequences
 
+      case 'get_sequence': {
+        if (!args.sequenceId) throw new Error('sequenceId required')
+        const sequence = this.projectStore.getProject().sequences.find((item) => item.id === String(args.sequenceId))
+        if (!sequence) throw new Error(`Sequence not found: ${args.sequenceId}`)
+        return sequence
+      }
+
       case 'create_sequence': {
         if (!args.name) throw new Error('name required')
-        const seq = this.projectStore.createSequence(args.name)
+        const seq = this.projectStore.createSequence(
+          args.name,
+          typeof args.width === 'number' ? Number(args.width) : undefined,
+          typeof args.height === 'number' ? Number(args.height) : undefined
+        )
         this.controlStateService.update({ activeSequenceId: seq.id })
         this.pushProjectUpdate()
         return seq
@@ -595,6 +895,19 @@ export class APIBridge {
         if (!args.sequenceId) throw new Error('sequenceId required')
         const seq = this.projectStore.activateSequence(args.sequenceId)
         this.controlStateService.update({ activeSequenceId: seq.id })
+        this.pushProjectUpdate()
+        return seq
+      }
+
+      case 'set_sequence_size': {
+        if (args.width == null || args.height == null) {
+          throw new Error('width and height required')
+        }
+        const seq = this.projectStore.setSequenceSize(
+          args.sequenceId ? String(args.sequenceId) : undefined,
+          Number(args.width),
+          Number(args.height)
+        )
         this.pushProjectUpdate()
         return seq
       }
@@ -739,7 +1052,25 @@ export class APIBridge {
       // ── Effects ───────────────────────────────────────────────────────────
       case 'list_effects': {
         return {
-          available: ['fade_in', 'fade_out', 'color_grade', 'blur', 'sharpen', 'speed_ramp', 'transform', 'opacity', 'blend_mode', 'text_overlay', 'chroma_key', 'mask_box'],
+          available: [
+            'fade_in',
+            'fade_out',
+            'color_grade',
+            'blur',
+            'sharpen',
+            'speed_ramp',
+            'transform',
+            'opacity',
+            'blend_mode',
+            'text_overlay',
+            'chroma_key',
+            'mask_box',
+            'drop_shadow',
+            'glow',
+            'background_fill',
+            'gradient_fill',
+            'shape_overlay'
+          ],
           parameters: {
             fade_in:     { duration: 'number (seconds, default 1)' },
             fade_out:    { duration: 'number (seconds, default 1)' },
@@ -750,9 +1081,40 @@ export class APIBridge {
             transform:   { x: 'number (px)', y: 'number (px)', scaleX: 'number', scaleY: 'number', rotation: 'number (deg)' },
             opacity:     { opacity: 'number (0–1)' },
             blend_mode:  { mode: 'string (normal|screen|multiply|overlay|lighten)' },
-            text_overlay:{ text: 'string', x: 'number (px)', y: 'number (px)', scale: 'number', rotation: 'number (deg)', opacity: 'number (0–1)', fontSize: 'number (px)' },
+            text_overlay:{
+              text: 'string',
+              x: 'number (px)',
+              y: 'number (px)',
+              scale: 'number',
+              rotation: 'number (deg)',
+              opacity: 'number (0–1)',
+              fontSize: 'number (px)',
+              color: 'string (#ffffff)',
+              fontFamily: 'string (family name or absolute font path)',
+              fontWeight: 'number|string (400|500|600|700...)',
+              letterSpacing: 'number (px)',
+              lineHeight: 'number (multiplier, e.g. 1.05)',
+              textAlign: 'string (left|center|right)',
+              maxWidth: 'number (px)',
+              strokeColor: 'string (#000000)',
+              strokeWidth: 'number (px)'
+            },
             chroma_key:  { color: 'string (#00ff00)', similarity: 'number (0–1)', blend: 'number (0–1)' },
-            mask_box:    { x: 'number (px)', y: 'number (px)', width: 'number (px)', height: 'number (px)', feather: 'number (px)' }
+            mask_box:    { x: 'number (px)', y: 'number (px)', width: 'number (px)', height: 'number (px)', feather: 'number (px)' },
+            drop_shadow: { color: 'string (#000000)', opacity: 'number (0–1)', blur: 'number (px)', offsetX: 'number (px)', offsetY: 'number (px)' },
+            glow:        { color: 'string (#ffffff)', opacity: 'number (0–1)', radius: 'number (px)' },
+            background_fill: { color: 'string (#000000)', opacity: 'number (0–1)' },
+            gradient_fill: { fromColor: 'string (#ffffff)', toColor: 'string (#ffffff)', angle: 'number (deg)', opacity: 'number (0–1)' },
+            shape_overlay: {
+              shape: 'string (rect|line)',
+              x: 'number (px)',
+              y: 'number (px)',
+              width: 'number (px)',
+              height: 'number (px)',
+              color: 'string (#ffffff)',
+              opacity: 'number (0–1)',
+              strokeWidth: 'number (px)'
+            }
           },
           motion: {
             set_effect_keyframes: 'Attach ordered keyframes to an existing effect. Numeric parameters interpolate over time.'

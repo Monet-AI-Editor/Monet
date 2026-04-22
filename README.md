@@ -32,6 +32,7 @@ The app combines:
 - deterministic editor tools through `editorctl`, a local API bridge, and MCP
 - local transcription with `faster-whisper`
 - semantic search powered by embeddings when an OpenAI key is configured
+- the same OpenAI key can also be reused for GPT Image 2 generation
 
 Monet is not a chat demo wrapped around a timeline. The terminal, project graph, and editor runtime are the product.
 
@@ -170,7 +171,7 @@ For local use, `VITE_MONET_SENTRY_DSN` can usually match `MONET_SENTRY_DSN`.
 
 On first launch, Monet asks for:
 
-- an OpenAI API key for embeddings and semantic search
+- an OpenAI API key for embeddings and semantic search, with the same key reusable for GPT Image 2 generation
 - an explicit anonymous usage analytics choice
 - nothing else up front
 
@@ -206,6 +207,7 @@ Monet is intentionally local-first.
 
 - **Transcription**: local `faster-whisper` by default
 - **Embeddings**: OpenAI API key required
+- **GPT Image 2 generation**: the same OpenAI API key can be reused
 - **Export**: local `ffmpeg`
 - **Project files**: plain `.aiveproj.json` files plus autosaves
 

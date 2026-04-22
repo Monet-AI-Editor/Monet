@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import type { EditorState, EditorActions } from '../store/useEditorStore'
 import type { MediaAsset, TimelineClip } from '../types'
 
-type Props = Pick<EditorState, 'isPlaying' | 'playheadTime' | 'totalDuration' | 'selectedClipId' | 'selectedAssetId' | 'assets' | 'tracks'> &
+type Props = Pick<EditorState, 'isPlaying' | 'playheadTime' | 'totalDuration' | 'selectedClipId' | 'selectedAssetId' | 'assets' | 'tracks' | 'activeSequenceWidth' | 'activeSequenceHeight'> &
   Pick<EditorActions, 'setIsPlaying' | 'setPlayheadTime' | 'splitSelectedClip'>
 
 function formatTimecode(s: number): string {
@@ -71,6 +71,39 @@ function resolveEffectParameters(
   return resolved
 }
 
+function normalizeHexColor(value: string | undefined, fallback = '#ffffff'): string {
+  if (!value) return fallback
+  const trimmed = value.trim()
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase()
+  if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
+    return `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`.toLowerCase()
+  }
+  return fallback
+}
+
+function hexToRgba(value: string | undefined, alpha = 1, fallback = '#ffffff'): string {
+  const normalized = normalizeHexColor(value, fallback)
+  const r = Number.parseInt(normalized.slice(1, 3), 16)
+  const g = Number.parseInt(normalized.slice(3, 5), 16)
+  const b = Number.parseInt(normalized.slice(5, 7), 16)
+  const clampedAlpha = Math.max(0, Math.min(1, alpha))
+  return `rgba(${r}, ${g}, ${b}, ${clampedAlpha})`
+}
+
+function buildGradientCss(
+  fromColor: string | undefined,
+  toColor: string | undefined,
+  angle: number,
+  opacity: number
+): string {
+  return `linear-gradient(${angle}deg, ${hexToRgba(fromColor, opacity)} 0%, ${hexToRgba(toColor, opacity)} 100%)`
+}
+
+function normalizeTextAlign(value: string | undefined): 'left' | 'center' | 'right' {
+  if (value === 'left' || value === 'right') return value
+  return 'center'
+}
+
 type ActivePreviewLayer = {
   clip: TimelineClip
   asset: MediaAsset
@@ -83,6 +116,8 @@ function PreviewLayer({
   assetUrl,
   muted,
   audioMuted,
+  canvasWidth,
+  canvasHeight,
   onTogglePlay,
   registerVideoRef
 }: {
@@ -90,6 +125,8 @@ function PreviewLayer({
   assetUrl: string | null
   muted: boolean
   audioMuted: boolean
+  canvasWidth: number
+  canvasHeight: number
   onTogglePlay: () => void
   registerVideoRef: (clipId: string, node: HTMLVideoElement | null) => void
 }) {
@@ -104,6 +141,11 @@ function PreviewLayer({
   const blendModeEffect = effects.find((effect) => effect.type === 'blend_mode' && effect.enabled)
   const textOverlayEffect = effects.find((effect) => effect.type === 'text_overlay' && effect.enabled)
   const maskBoxEffect = effects.find((effect) => effect.type === 'mask_box' && effect.enabled)
+  const dropShadowEffect = effects.find((effect) => effect.type === 'drop_shadow' && effect.enabled)
+  const glowEffect = effects.find((effect) => effect.type === 'glow' && effect.enabled)
+  const backgroundFillEffect = effects.find((effect) => effect.type === 'background_fill' && effect.enabled)
+  const gradientFillEffect = effects.find((effect) => effect.type === 'gradient_fill' && effect.enabled)
+  const shapeOverlayEffects = effects.filter((effect) => effect.type === 'shape_overlay' && effect.enabled)
 
   let videoOpacity = 1
   if (fadeIn) {
@@ -132,6 +174,11 @@ function PreviewLayer({
   const resolvedOpacity = resolveEffectParameters(opacityEffect, layer.clipLocalTime)
   const resolvedBlendMode = resolveEffectParameters(blendModeEffect, layer.clipLocalTime)
   const resolvedTextOverlay = resolveEffectParameters(textOverlayEffect, layer.clipLocalTime)
+  const resolvedMaskBox = resolveEffectParameters(maskBoxEffect, layer.clipLocalTime)
+  const resolvedDropShadow = resolveEffectParameters(dropShadowEffect, layer.clipLocalTime)
+  const resolvedGlow = resolveEffectParameters(glowEffect, layer.clipLocalTime)
+  const resolvedBackgroundFill = resolveEffectParameters(backgroundFillEffect, layer.clipLocalTime)
+  const resolvedGradientFill = resolveEffectParameters(gradientFillEffect, layer.clipLocalTime)
   const transformX = Number(resolvedTransform.x ?? 0)
   const transformY = Number(resolvedTransform.y ?? 0)
   const scaleX = Number(resolvedTransform.scaleX ?? resolvedTransform.scale ?? 1)
@@ -147,10 +194,59 @@ function PreviewLayer({
   const textOverlayRotation = Number(resolvedTextOverlay.rotation ?? 0)
   const textOverlayOpacity = Math.max(0, Math.min(1, Number(resolvedTextOverlay.opacity ?? 1)))
   const textOverlayFontSize = Number(resolvedTextOverlay.fontSize ?? 56)
+  const textOverlayColor = normalizeHexColor(typeof resolvedTextOverlay.color === 'string' ? resolvedTextOverlay.color : undefined)
+  const textOverlayFontFamily = typeof resolvedTextOverlay.fontFamily === 'string' && resolvedTextOverlay.fontFamily.trim().length > 0
+    ? resolvedTextOverlay.fontFamily
+    : undefined
+  const textOverlayFontWeight = typeof resolvedTextOverlay.fontWeight === 'string' || typeof resolvedTextOverlay.fontWeight === 'number'
+    ? resolvedTextOverlay.fontWeight
+    : 600
+  const textOverlayLetterSpacing = Number(resolvedTextOverlay.letterSpacing ?? 0)
+  const textOverlayLineHeight = Math.max(0.7, Number(resolvedTextOverlay.lineHeight ?? 1.05))
+  const textOverlayAlign = normalizeTextAlign(typeof resolvedTextOverlay.textAlign === 'string' ? resolvedTextOverlay.textAlign : undefined)
+  const textOverlayMaxWidth = Math.max(0, Number(resolvedTextOverlay.maxWidth ?? 0))
+  const textOverlayStrokeColor = normalizeHexColor(
+    typeof resolvedTextOverlay.strokeColor === 'string' ? resolvedTextOverlay.strokeColor : undefined,
+    '#000000'
+  )
+  const textOverlayStrokeWidth = Math.max(0, Number(resolvedTextOverlay.strokeWidth ?? 0))
 
   const clipPath = maskBoxEffect
-    ? `inset(${Math.max(0, Number(maskBoxEffect.parameters.y ?? 0))}px ${Math.max(0, 1280 - (Number(maskBoxEffect.parameters.x ?? 0) + Number(maskBoxEffect.parameters.width ?? 1280)))}px ${Math.max(0, 720 - (Number(maskBoxEffect.parameters.y ?? 0) + Number(maskBoxEffect.parameters.height ?? 720)))}px ${Math.max(0, Number(maskBoxEffect.parameters.x ?? 0))}px)`
+    ? `inset(${Math.max(0, Number(resolvedMaskBox.y ?? 0))}px ${Math.max(0, canvasWidth - (Number(resolvedMaskBox.x ?? 0) + Number(resolvedMaskBox.width ?? canvasWidth)))}px ${Math.max(0, canvasHeight - (Number(resolvedMaskBox.y ?? 0) + Number(resolvedMaskBox.height ?? canvasHeight)))}px ${Math.max(0, Number(resolvedMaskBox.x ?? 0))}px)`
     : undefined
+  const dropShadowColor = hexToRgba(
+    typeof resolvedDropShadow.color === 'string' ? resolvedDropShadow.color : undefined,
+    Number(resolvedDropShadow.opacity ?? 0.45),
+    '#000000'
+  )
+  const dropShadowBlur = Math.max(0, Number(resolvedDropShadow.blur ?? 18))
+  const dropShadowOffsetX = Number(resolvedDropShadow.offsetX ?? 0)
+  const dropShadowOffsetY = Number(resolvedDropShadow.offsetY ?? 10)
+  const glowColor = hexToRgba(
+    typeof resolvedGlow.color === 'string' ? resolvedGlow.color : undefined,
+    Number(resolvedGlow.opacity ?? 0.35),
+    '#ffffff'
+  )
+  const glowRadius = Math.max(0, Number(resolvedGlow.radius ?? 18))
+  const backgroundFillColor = hexToRgba(
+    typeof resolvedBackgroundFill.color === 'string' ? resolvedBackgroundFill.color : undefined,
+    Number(resolvedBackgroundFill.opacity ?? 1),
+    '#000000'
+  )
+  const gradientFillCss = buildGradientCss(
+    typeof resolvedGradientFill.fromColor === 'string' ? resolvedGradientFill.fromColor : undefined,
+    typeof resolvedGradientFill.toColor === 'string' ? resolvedGradientFill.toColor : undefined,
+    Number(resolvedGradientFill.angle ?? 135),
+    Number(resolvedGradientFill.opacity ?? 1)
+  )
+
+  if (dropShadowEffect) {
+    filterParts.push(`drop-shadow(${dropShadowOffsetX}px ${dropShadowOffsetY}px ${dropShadowBlur}px ${dropShadowColor})`)
+  }
+  if (glowEffect) {
+    filterParts.push(`drop-shadow(0 0 ${glowRadius}px ${glowColor})`)
+    filterParts.push(`drop-shadow(0 0 ${Math.max(2, glowRadius * 0.45)}px ${glowColor})`)
+  }
 
   return (
     <div
@@ -161,7 +257,9 @@ function PreviewLayer({
         transform: `translate(${transformX}px, ${transformY}px) rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`,
         mixBlendMode: blendMode,
         transformOrigin: 'center center',
-        clipPath
+        clipPath,
+        backgroundColor: backgroundFillEffect ? backgroundFillColor : undefined,
+        backgroundImage: gradientFillEffect ? gradientFillCss : undefined
       }}
     >
       {layer.asset.type === 'video' && assetUrl ? (
@@ -179,9 +277,47 @@ function PreviewLayer({
         <img src={assetUrl} alt={layer.asset.name} className="w-full h-full object-contain bg-transparent" />
       ) : null}
 
+      {shapeOverlayEffects.map((shapeEffect) => {
+        const resolvedShape = resolveEffectParameters(shapeEffect, layer.clipLocalTime)
+        const shape = String(resolvedShape.shape ?? 'rect')
+        const x = Number(resolvedShape.x ?? 0)
+        const y = Number(resolvedShape.y ?? 0)
+        const width = Math.max(1, Number(resolvedShape.width ?? 320))
+        const height = Math.max(1, Number(resolvedShape.height ?? 180))
+        const opacity = Math.max(0, Math.min(1, Number(resolvedShape.opacity ?? 1)))
+        const color = hexToRgba(typeof resolvedShape.color === 'string' ? resolvedShape.color : undefined, opacity)
+        const strokeWidth = Math.max(0, Number(resolvedShape.strokeWidth ?? 0))
+        const lineThickness = shape === 'line'
+          ? (width >= height ? Math.max(1, strokeWidth || height) : Math.max(1, strokeWidth || width))
+          : strokeWidth
+
+        return (
+          <div
+            key={shapeEffect.id}
+            className="absolute pointer-events-none"
+            style={{
+              left: `${x}px`,
+              top: `${y}px`,
+              width: `${width}px`,
+              height: `${height}px`,
+              backgroundColor: shape === 'rect' && lineThickness <= 0 ? color : 'transparent',
+              border:
+                shape === 'rect' && lineThickness > 0
+                  ? `${lineThickness}px solid ${color}`
+                  : undefined,
+              ...(shape === 'line'
+                ? width >= height
+                  ? { height: `${lineThickness}px`, backgroundColor: color }
+                  : { width: `${lineThickness}px`, backgroundColor: color }
+                : {})
+            }}
+          />
+        )
+      })}
+
       {textOverlayText ? (
         <div
-          className="absolute inset-0 pointer-events-none flex items-center justify-center text-white text-center px-8"
+          className="absolute inset-0 pointer-events-none flex items-center justify-center px-8"
           style={{
             opacity: textOverlayOpacity,
             transform: `translate(${textOverlayX}px, ${textOverlayY}px) rotate(${textOverlayRotation}deg) scale(${textOverlayScale})`,
@@ -189,8 +325,21 @@ function PreviewLayer({
           }}
         >
           <div
-            className="font-semibold tracking-tight drop-shadow-[0_6px_24px_rgba(0,0,0,0.55)]"
-            style={{ fontSize: `${textOverlayFontSize}px`, lineHeight: 1.05, maxWidth: '85%' }}
+            className="drop-shadow-[0_6px_24px_rgba(0,0,0,0.55)] whitespace-pre-wrap break-words"
+            style={{
+              width: textOverlayMaxWidth > 0 ? `${textOverlayMaxWidth}px` : '85%',
+              maxWidth: textOverlayMaxWidth > 0 ? `${textOverlayMaxWidth}px` : '85%',
+              fontSize: `${textOverlayFontSize}px`,
+              lineHeight: textOverlayLineHeight,
+              color: textOverlayColor,
+              textAlign: textOverlayAlign,
+              fontFamily: textOverlayFontFamily,
+              fontWeight: textOverlayFontWeight,
+              letterSpacing: `${textOverlayLetterSpacing}px`,
+              WebkitTextStrokeColor: textOverlayStrokeColor,
+              WebkitTextStrokeWidth: textOverlayStrokeWidth > 0 ? `${textOverlayStrokeWidth}px` : undefined,
+              paintOrder: 'stroke fill'
+            }}
           >
             {textOverlayText}
           </div>
@@ -206,6 +355,8 @@ export function PreviewMonitor({
   playheadTime,
   setPlayheadTime,
   totalDuration,
+  activeSequenceWidth,
+  activeSequenceHeight,
   selectedClipId,
   selectedAssetId,
   assets,
@@ -697,63 +848,86 @@ export function PreviewMonitor({
     await containerRef.current.requestFullscreen()
   }
 
+  const canvasWidth = Math.max(16, activeSequenceWidth || 1920)
+  const canvasHeight = Math.max(16, activeSequenceHeight || 1080)
+  const stageStyle =
+    canvasHeight > canvasWidth
+      ? {
+          aspectRatio: `${canvasWidth} / ${canvasHeight}`,
+          height: '100%',
+          width: 'auto',
+          maxWidth: '100%'
+        }
+      : {
+          aspectRatio: `${canvasWidth} / ${canvasHeight}`,
+          width: '100%',
+          height: 'auto',
+          maxHeight: '100%'
+        }
+
   return (
     <div className="flex flex-col h-full bg-surface-0" ref={containerRef}>
       {/* Video area */}
       <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden min-h-0">
-        {renderedVideoLayers.length > 0 ? (
-          renderedVideoLayers.map((layer, index) => {
-            const layerPreviewKey = getPreviewCacheKey(layer.asset)
-            const layerAssetUrl = resolvedPreviewPaths[layerPreviewKey]
-              ? `${window.api.toFileUrl(resolvedPreviewPaths[layerPreviewKey].path)}&v=${encodeURIComponent(resolvedPreviewPaths[layerPreviewKey].cacheKey)}`
-              : null
-            const primaryAudioClipId = previewClip?.id ?? renderedVideoLayers[0]?.clip.id ?? null
-            const audioMuted = layer.clip.id !== primaryAudioClipId
+        <div className="relative flex h-full w-full items-center justify-center p-4">
+          <div className="relative overflow-hidden bg-black border border-white/6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]" style={stageStyle}>
+            {renderedVideoLayers.length > 0 ? (
+              renderedVideoLayers.map((layer, index) => {
+                const layerPreviewKey = getPreviewCacheKey(layer.asset)
+                const layerAssetUrl = resolvedPreviewPaths[layerPreviewKey]
+                  ? `${window.api.toFileUrl(resolvedPreviewPaths[layerPreviewKey].path)}&v=${encodeURIComponent(resolvedPreviewPaths[layerPreviewKey].cacheKey)}`
+                  : null
+                const primaryAudioClipId = previewClip?.id ?? renderedVideoLayers[0]?.clip.id ?? null
+                const audioMuted = layer.clip.id !== primaryAudioClipId
 
-            return layerAssetUrl || layer.asset.type === 'image' ? (
-              <PreviewLayer
-                key={layer.clip.id}
-                layer={layer}
-                assetUrl={layerAssetUrl}
-                muted={muted}
-                audioMuted={audioMuted}
-                onTogglePlay={() => setIsPlaying(!isPlaying)}
-                registerVideoRef={(clipId, node) => {
-                  layerVideoRefs.current[clipId] = node
-                  if (index === 0) videoRef.current = node
-                }}
-              />
+                return layerAssetUrl || layer.asset.type === 'image' ? (
+                  <PreviewLayer
+                    key={layer.clip.id}
+                    layer={layer}
+                    assetUrl={layerAssetUrl}
+                    muted={muted}
+                    audioMuted={audioMuted}
+                    canvasWidth={canvasWidth}
+                    canvasHeight={canvasHeight}
+                    onTogglePlay={() => setIsPlaying(!isPlaying)}
+                    registerVideoRef={(clipId, node) => {
+                      layerVideoRefs.current[clipId] = node
+                      if (index === 0) videoRef.current = node
+                    }}
+                  />
+                ) : (
+                  <div key={layer.clip.id} className="absolute inset-0 bg-black flex items-center justify-center">
+                    <div className="text-center space-y-2">
+                      <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-white/70 animate-spin mx-auto" />
+                      <p className="text-text-dim text-xs">Preparing preview…</p>
+                    </div>
+                  </div>
+                )
+              })
+            ) : asset?.type === 'image' && assetUrl ? (
+              <img src={assetUrl} alt={asset.name} className="w-full h-full object-contain bg-black" />
             ) : (
-              <div key={layer.clip.id} className="absolute inset-0 bg-black flex items-center justify-center">
-                <div className="text-center space-y-2">
-                  <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-white/70 animate-spin mx-auto" />
-                  <p className="text-text-dim text-xs">Preparing preview…</p>
+              <div className="w-full h-full bg-gradient-to-br from-surface-2 to-surface-0 flex items-center justify-center relative">
+                <div
+                  className="absolute inset-0 opacity-5"
+                  style={{
+                    backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
+                    backgroundSize: '48px 48px'
+                  }}
+                />
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="w-4 h-px bg-white/20" /><div className="h-4 w-px bg-white/20 absolute" />
+                </div>
+                <div className="text-center space-y-2 relative z-10">
+                  <div className="w-16 h-16 rounded-full bg-surface-3 border border-border flex items-center justify-center mx-auto">
+                    <Play size={24} className="text-text-dim ml-1" />
+                  </div>
+                  <p className="text-text-dim text-xs">{asset ? asset.name : 'No media loaded'}</p>
                 </div>
               </div>
-            )
-          })
-        ) : asset?.type === 'image' && assetUrl ? (
-          <img src={assetUrl} alt={asset.name} className="w-full h-full object-contain bg-black" />
-        ) : (
-          <div className="w-full h-full bg-gradient-to-br from-surface-2 to-surface-0 flex items-center justify-center relative">
-            <div
-              className="absolute inset-0 opacity-5"
-              style={{
-                backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
-                backgroundSize: '48px 48px'
-              }}
-            />
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="w-4 h-px bg-white/20" /><div className="h-4 w-px bg-white/20 absolute" />
-            </div>
-            <div className="text-center space-y-2 relative z-10">
-              <div className="w-16 h-16 rounded-full bg-surface-3 border border-border flex items-center justify-center mx-auto">
-                <Play size={24} className="text-text-dim ml-1" />
-              </div>
-              <p className="text-text-dim text-xs">{asset ? asset.name : 'No media loaded'}</p>
-            </div>
+            )}
           </div>
-        )}
+        </div>
 
         <div className="absolute top-2 left-2 bg-black/70 text-white font-mono text-2xs px-2 py-0.5 rounded pointer-events-none">
           {formatTimecode(clipLocalTime)}

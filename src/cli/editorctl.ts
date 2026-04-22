@@ -1,26 +1,98 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
+import { request as httpRequest } from 'http'
+import { dirname, join } from 'path'
 import type { EditorProjectRecord, TimelineClipRecord, Effect } from '../shared/editor.js'
 
-const PROJECT_FILE = process.env.AI_VIDEO_EDITOR_PROJECT || join(process.cwd(), 'project.aiveproj.json')
+const PROJECT_FILE = resolveProjectFile()
 const API_PORT = 51847
+const API_HOST_CANDIDATES = ['localhost', '127.0.0.1']
+
+function resolveProjectFile(): string {
+  if (process.env.AI_VIDEO_EDITOR_PROJECT) return process.env.AI_VIDEO_EDITOR_PROJECT
+
+  const preferred = join(process.cwd(), 'project.aiveproj.json')
+  if (existsSync(preferred)) return preferred
+
+  const cwd = process.cwd()
+  try {
+    const candidates = readdirSync(cwd)
+      .filter((entry) => entry.endsWith('.aiveproj.json'))
+      .map((entry) => {
+        const path = join(cwd, entry)
+        return {
+          path,
+          mtimeMs: statSync(path).mtimeMs
+        }
+      })
+      .sort((left, right) => right.mtimeMs - left.mtimeMs)
+
+    if (candidates.length > 0) return candidates[0].path
+  } catch {
+    // Fall through to the historical default path below.
+  }
+
+  return preferred
+}
+
+async function probeLiveAppHost(host: string): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const request = httpRequest(
+      {
+        host,
+        port: API_PORT,
+        path: '/help',
+        method: 'GET',
+        timeout: 900
+      },
+      (response) => {
+        let body = ''
+        response.setEncoding('utf8')
+        response.on('data', (chunk) => { body += chunk })
+        response.on('end', () => {
+          try {
+            if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+              resolve(false)
+              return
+            }
+            const data = JSON.parse(body)
+            resolve(data?.success === true)
+          } catch {
+            resolve(false)
+          }
+        })
+      }
+    )
+
+    request.on('error', () => resolve(false))
+    request.on('timeout', () => {
+      request.destroy()
+      resolve(false)
+    })
+    request.end()
+  })
+}
+
+async function resolveLiveAppHost(): Promise<string | null> {
+  for (const host of API_HOST_CANDIDATES) {
+    if (await probeLiveAppHost(host)) {
+      return host
+    }
+  }
+  return null
+}
 
 async function checkLiveApp(): Promise<boolean> {
-  try {
-    const response = await fetch(`http://localhost:${API_PORT}/help`, {
-      method: 'GET'
-    })
-    if (!response.ok) return false
-    const data = await response.json()
-    return data.success === true
-  } catch {
-    return false
-  }
+  return (await resolveLiveAppHost()) !== null
 }
 
 async function callLiveApp(command: string, args: any = {}): Promise<any> {
-  const response = await fetch(`http://localhost:${API_PORT}`, {
+  const host = await resolveLiveAppHost()
+  if (!host) {
+    throw new Error('Monet live app is not reachable')
+  }
+
+  const response = await fetch(`http://${host}:${API_PORT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ command, args })
@@ -39,12 +111,33 @@ function loadProject(): EditorProjectRecord {
     return JSON.parse(raw)
   } catch {
     console.error(`Failed to load project from ${PROJECT_FILE}`)
+    const parentDirectory = dirname(PROJECT_FILE)
+    if (parentDirectory === process.cwd()) {
+      console.error('No live Monet app was detected, and file mode could not find a usable project file in the current directory.')
+      console.error('Open the running Monet app or run this command from a directory that contains a .aiveproj.json file.')
+    }
     process.exit(1)
   }
 }
 
 function saveProject(project: EditorProjectRecord): void {
   writeFileSync(PROJECT_FILE, JSON.stringify(project, null, 2), 'utf8')
+}
+
+function parseKeyValueOptions(values: string[]): Record<string, string> {
+  const options: Record<string, string> = {}
+  for (const value of values) {
+    const separatorIndex = value.indexOf('=')
+    if (separatorIndex <= 0) continue
+    options[value.slice(0, separatorIndex).trim()] = value.slice(separatorIndex + 1).trim()
+  }
+  return options
+}
+
+function parseOptionalNumber(value: string | undefined): number | undefined {
+  if (value == null || value === '') return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
 }
 
 function showHelp(): void {
@@ -87,6 +180,8 @@ COMMANDS:
 
   activate-sequence <sequenceId>
                           Make a sequence active
+  set-sequence-size <width> <height> [sequenceId]
+                          Set sequence canvas size (defaults to active sequence)
   add-marker <time> <label> [duration] [color] [seqId]
                           Add a timeline marker
   remove-marker <markerId> [seqId]
@@ -139,6 +234,11 @@ COMMANDS:
   contact-sheet <assetId> [count]
                           Create a contact sheet image for a video asset
 
+  generate-image <prompt> [size] [quality] [background] [format] [key=value...]
+                          Generate an image with OpenAI and import it into the current project
+  edit-image <prompt> <input1> [input2...] [key=value...]
+                          Edit one or more images with OpenAI and import the result into the current project
+
   export <outputPath> [quality] [resolution] [format]
                           Export active sequence (quality: draft|standard|high, resolution: 720p|1080p|4k, format: mp4|mov)
 
@@ -151,6 +251,7 @@ EXAMPLES:
   editorctl list-markers
   editorctl list-tracks
   editorctl get-state
+  editorctl set-sequence-size 1080 1920
   editorctl add-clip asset_123 track_video_0 0 5.5
   editorctl move-clip clip_456 12.5
   editorctl trim-clip clip_456 3.0 5.0
@@ -163,6 +264,8 @@ EXAMPLES:
   editorctl search-segments "pricing"
   editorctl batch-selects "customer quote" 8 0.5 "Best Quotes"
   editorctl extract-frames asset_123 8
+  editorctl generate-image "Minimal black hero shot of a laptop on a white plinth" 1536x1024 high opaque png moderation=low outputCompression=90
+  editorctl edit-image "Remove the background and center the product" asset_123 background=transparent format=png inputFidelity=high
   editorctl export ~/Desktop/output.mov high 4k mov
 `)
 }
@@ -365,6 +468,25 @@ async function main(): Promise<void> {
             process.exit(1)
           }
           const result = await callLiveApp('activate_sequence', { sequenceId })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'set-sequence-size': {
+          const [, widthStr, heightStr, sequenceId] = args
+          if (!widthStr || !heightStr) {
+            console.error('Usage: editorctl set-sequence-size <width> <height> [sequenceId]')
+            process.exit(1)
+          }
+
+          const width = Number(widthStr)
+          const height = Number(heightStr)
+          if (!Number.isFinite(width) || !Number.isFinite(height)) {
+            console.error('width and height must be numbers')
+            process.exit(1)
+          }
+
+          const result = await callLiveApp('set_sequence_size', { width, height, sequenceId })
           console.log(JSON.stringify(result, null, 2))
           return
         }
@@ -630,6 +752,55 @@ async function main(): Promise<void> {
           return
         }
 
+        case 'generate-image': {
+          const [, prompt, size, quality, background, format, ...rest] = args
+          if (!prompt) {
+            console.error('Usage: editorctl generate-image <prompt> [size] [quality] [background] [format] [moderation=auto|low] [outputCompression=0-100] [partialImages=0-3]')
+            process.exit(1)
+          }
+          const options = parseKeyValueOptions(rest)
+          const result = await callLiveApp('generate_image', {
+            prompt,
+            size,
+            quality,
+            background,
+            format,
+            moderation: options.moderation,
+            outputCompression: parseOptionalNumber(options.outputCompression),
+            partialImages: parseOptionalNumber(options.partialImages)
+          })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'edit-image': {
+          const [, prompt, ...rest] = args
+          if (!prompt) {
+            console.error('Usage: editorctl edit-image <prompt> <input1> [input2...] [size=auto|1024x1024|1536x1024|1024x1536] [quality=auto|low|medium|high] [background=auto|opaque|transparent] [format=png|jpeg|webp] [outputCompression=0-100] [partialImages=0-3] [inputFidelity=low|high] [mask=<assetId|path>]')
+            process.exit(1)
+          }
+          const inputs = rest.filter((value) => !value.includes('='))
+          if (inputs.length === 0) {
+            console.error('Usage: editorctl edit-image <prompt> <input1> [input2...] [key=value...]')
+            process.exit(1)
+          }
+          const options = parseKeyValueOptions(rest.filter((value) => value.includes('=')))
+          const result = await callLiveApp('edit_image', {
+            prompt,
+            inputs,
+            size: options.size,
+            quality: options.quality,
+            background: options.background,
+            format: options.format,
+            outputCompression: parseOptionalNumber(options.outputCompression),
+            partialImages: parseOptionalNumber(options.partialImages),
+            inputFidelity: options.inputFidelity,
+            mask: options.mask
+          })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
         case 'export': {
           const [, outputPath, quality = 'high', resolution = '1080p', format = 'mp4'] = args
           if (!outputPath) {
@@ -682,6 +853,18 @@ async function main(): Promise<void> {
 
     case 'transcribe': {
       console.error('Transcription requires live app connection')
+      console.error('Start the app and try again')
+      process.exit(1)
+    }
+
+    case 'generate-image': {
+      console.error('Image generation requires live app connection')
+      console.error('Start the app and try again')
+      process.exit(1)
+    }
+
+    case 'edit-image': {
+      console.error('Image editing requires live app connection')
       console.error('Start the app and try again')
       process.exit(1)
     }

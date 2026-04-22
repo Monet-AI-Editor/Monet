@@ -56,6 +56,8 @@ type BackendProject = {
     name: string
     duration: number
     active: boolean
+    width: number
+    height: number
     tracks: Array<{
       id: string
       name: string
@@ -187,7 +189,9 @@ function mapProject(project: BackendProject) {
     id: sequence.id,
     name: sequence.name,
     duration: sequence.duration,
-    active: sequence.active
+    active: sequence.active,
+    width: sequence.width,
+    height: sequence.height
   }))
 
   const totalDuration = activeSequence?.duration ?? 0
@@ -200,7 +204,9 @@ function mapProject(project: BackendProject) {
     tracks,
     sequences,
     totalDuration,
-    firstClipId
+    firstClipId,
+    activeSequenceWidth: activeSequence?.width ?? 1920,
+    activeSequenceHeight: activeSequence?.height ?? 1080
   }
 }
 
@@ -213,6 +219,8 @@ export interface EditorState {
   selectedClipId: string | null
   playheadTime: number
   totalDuration: number
+  activeSequenceWidth: number
+  activeSequenceHeight: number
   zoom: number
   isPlaying: boolean
   leftTab: LeftTab
@@ -265,6 +273,9 @@ export interface EditorActions {
   addTrack: (kind: 'video' | 'audio' | 'caption') => Promise<void>
   activateSequence: (sequenceId: string) => Promise<void>
   splitSelectedClip: () => Promise<void>
+  addClipEffect: (clipId: string, effectType: string, parameters?: Record<string, unknown>) => Promise<void>
+  updateClipEffectParameters: (clipId: string, effectId: string, parameters: Record<string, unknown>) => Promise<void>
+  removeClipEffect: (clipId: string, effectId: string) => Promise<void>
   undo: () => Promise<void>
   redo: () => Promise<void>
 }
@@ -296,6 +307,8 @@ export function useEditorStore(): EditorState & EditorActions {
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
   const [playheadTime, setPlayheadTime] = useState(0)
   const [totalDuration, setTotalDuration] = useState(0)
+  const [activeSequenceWidth, setActiveSequenceWidth] = useState(1920)
+  const [activeSequenceHeight, setActiveSequenceHeight] = useState(1080)
   const [zoom, setZoom] = useState(1)
   const [isPlaying, setIsPlaying] = useState(false)
   const [leftTab, setLeftTab] = useState<LeftTab>('media')
@@ -330,6 +343,7 @@ export function useEditorStore(): EditorState & EditorActions {
   const messagesRef = useRef(messages)
   const settingsRef = useRef(aiSettings)
   const modelRef = useRef(model)
+  const exportToastTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     messagesRef.current = messages
@@ -342,6 +356,33 @@ export function useEditorStore(): EditorState & EditorActions {
   useEffect(() => {
     modelRef.current = model
   }, [model])
+
+  useEffect(() => {
+    return () => {
+      if (exportToastTimeoutRef.current != null) {
+        window.clearTimeout(exportToastTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  const clearExportToast = useCallback(() => {
+    if (exportToastTimeoutRef.current != null) {
+      window.clearTimeout(exportToastTimeoutRef.current)
+      exportToastTimeoutRef.current = null
+    }
+    setLastExportPath(null)
+  }, [])
+
+  const showExportToast = useCallback((outputPath: string) => {
+    if (exportToastTimeoutRef.current != null) {
+      window.clearTimeout(exportToastTimeoutRef.current)
+    }
+    setLastExportPath(outputPath)
+    exportToastTimeoutRef.current = window.setTimeout(() => {
+      setLastExportPath(null)
+      exportToastTimeoutRef.current = null
+    }, 8000)
+  }, [])
 
   const syncControlState = useCallback((partial: {
     playheadTime?: number
@@ -360,6 +401,8 @@ export function useEditorStore(): EditorState & EditorActions {
     setTracks(mapped.tracks)
     setSequences(mapped.sequences)
     setTotalDuration(mapped.totalDuration)
+    setActiveSequenceWidth(mapped.activeSequenceWidth)
+    setActiveSequenceHeight(mapped.activeSequenceHeight)
     setSelectedAssetId((current) => (current && mapped.assets.some((asset) => asset.id === current) ? current : mapped.assets[0]?.id ?? null))
     setSelectedClipId((current) => (current && mapped.tracks.some((track) => track.clips.some((clip) => clip.id === current)) ? current : mapped.firstClipId))
     setPlayheadTime((current) => Math.min(current, mapped.totalDuration))
@@ -484,6 +527,7 @@ export function useEditorStore(): EditorState & EditorActions {
     const filePath = explicitPath ?? await window.api.openProjectFile()
     if (!filePath) return false
     setIsPlaying(false)
+    clearExportToast()
     const payload = await window.api.openProject(filePath) as ProjectLoadPayload
     applyProject(payload.project)
     const bootstrap = await window.api.getEditorBootstrap() as BootstrapPayload
@@ -498,10 +542,11 @@ export function useEditorStore(): EditorState & EditorActions {
       }
     ])
     return true
-  }, [applyBootstrapMeta, applyProject])
+  }, [applyBootstrapMeta, applyProject, clearExportToast])
 
   const createProject = useCallback(async (name?: string) => {
     setIsPlaying(false)
+    clearExportToast()
     const payload = await window.api.createProject(name) as ProjectLoadPayload
     applyProject(payload.project)
     const bootstrap = await window.api.getEditorBootstrap() as BootstrapPayload
@@ -515,7 +560,7 @@ export function useEditorStore(): EditorState & EditorActions {
         status: 'done'
       }
     ])
-  }, [applyBootstrapMeta, applyProject])
+  }, [applyBootstrapMeta, applyProject, clearExportToast])
 
   const saveProject = useCallback(async () => {
     let outputPath = projectFilePath
@@ -641,6 +686,7 @@ export function useEditorStore(): EditorState & EditorActions {
 
   const exportSequence = useCallback(async (options: ExportOptions) => {
     setLastError(null)
+    clearExportToast()
     setExportStatus('running')
     setExportMessage('Choose where to save the export.')
     setExportProgress(0)
@@ -653,7 +699,7 @@ export function useEditorStore(): EditorState & EditorActions {
       setExportMessage(`Rendering ${options.resolution} ${options.format.toUpperCase()} export…`)
 
       const result = await window.api.exportActiveSequence(outputPath, options) as ExportResult
-      setLastExportPath(result.outputPath)
+      showExportToast(result.outputPath)
       setExportMessage('Finalizing export…')
       setMessages((current) => [
         ...current,
@@ -683,7 +729,7 @@ export function useEditorStore(): EditorState & EditorActions {
       setExportMessage(null)
       setExportProgress(null)
     }
-  }, [projectName])
+  }, [clearExportToast, projectName, showExportToast])
 
   const runTool = useCallback(async (name: string, args: Record<string, unknown> = {}) => {
     setLastError(null)
@@ -716,6 +762,27 @@ export function useEditorStore(): EditorState & EditorActions {
       const message = error instanceof Error ? error.message : `Tool ${name} failed.`
       setLastError(message)
     }
+  }, [applyBootstrapMeta, applyProject])
+
+  const addClipEffect = useCallback(async (clipId: string, effectType: string, parameters: Record<string, unknown> = {}) => {
+    const project = await window.api.addEffect(clipId, effectType, parameters)
+    applyProject(project as BackendProject)
+    const payload = await window.api.getEditorBootstrap() as BootstrapPayload
+    applyBootstrapMeta(payload)
+  }, [applyBootstrapMeta, applyProject])
+
+  const updateClipEffectParameters = useCallback(async (clipId: string, effectId: string, parameters: Record<string, unknown>) => {
+    const project = await window.api.updateEffectParameters(clipId, effectId, parameters)
+    applyProject(project as BackendProject)
+    const payload = await window.api.getEditorBootstrap() as BootstrapPayload
+    applyBootstrapMeta(payload)
+  }, [applyBootstrapMeta, applyProject])
+
+  const removeClipEffect = useCallback(async (clipId: string, effectId: string) => {
+    const project = await window.api.removeEffect(clipId, effectId)
+    applyProject(project as BackendProject)
+    const payload = await window.api.getEditorBootstrap() as BootstrapPayload
+    applyBootstrapMeta(payload)
   }, [applyBootstrapMeta, applyProject])
 
   const addTrack = useCallback(async (kind: 'video' | 'audio' | 'caption') => {
@@ -764,6 +831,8 @@ export function useEditorStore(): EditorState & EditorActions {
     selectedClipId,
     playheadTime,
     totalDuration,
+    activeSequenceWidth,
+    activeSequenceHeight,
     zoom,
     isPlaying,
     leftTab,
@@ -796,6 +865,8 @@ export function useEditorStore(): EditorState & EditorActions {
     selectedClipId,
     playheadTime,
     totalDuration,
+    activeSequenceWidth,
+    activeSequenceHeight,
     zoom,
     isPlaying,
     leftTab,
@@ -855,6 +926,9 @@ export function useEditorStore(): EditorState & EditorActions {
     addTrack,
     activateSequence,
     splitSelectedClip,
+    addClipEffect,
+    updateClipEffectParameters,
+    removeClipEffect,
     undo,
     redo
   }

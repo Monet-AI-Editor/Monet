@@ -18,6 +18,7 @@ import { TerminalService } from './services/terminal-service'
 import { TranscriptionService } from './services/transcription-service'
 import { APIBridge } from './services/api-bridge'
 import { EmbeddingService } from './services/embedding-service'
+import { ImageGenerationService } from './services/image-generation-service'
 import { WaveformService } from './services/waveform-service'
 import { FrameExtractionService } from './services/frame-extraction-service'
 import { ControlStateService } from './services/control-state-service'
@@ -51,6 +52,7 @@ let projectStore: ProjectStore
 let toolRegistry: ToolRegistry
 const transcriptionService = new TranscriptionService()
 const embeddingService = new EmbeddingService()
+const imageGenerationService = new ImageGenerationService()
 const waveformService = new WaveformService()
 const frameExtractionService = new FrameExtractionService()
 let previewProxyService: PreviewProxyService
@@ -460,7 +462,7 @@ exit 1
   await chmod(shimPath, 0o755)
 
   const startupPrompt =
-    'You are inside Monet, an AI-first video editor. Read ./MONET_AGENT_CONTEXT.md first. For any question about the current project, assets, screenshots, images, timeline, or "the app", inspect Monet live state before answering. Start with editorctl get-state and editorctl list-assets. Do not begin by searching the surrounding filesystem unless the user explicitly asks about files on disk outside Monet.'
+    'You are inside Monet, an AI-first video editor. Read ./MONET_AGENT_CONTEXT.md first. For any question about the current project, assets, screenshots, images, timeline, or "the app", inspect Monet live state before answering. Start with editorctl get-state and editorctl list-assets. Prefer editorctl over raw localhost API calls. Only fall back to the Monet API bridge if editorctl does not expose the operation or editorctl is failing. Do not guess localhost commands or endpoints. Do not begin by searching the surrounding filesystem unless the user explicitly asks about files on disk outside Monet.'
 
   for (const binaryName of ['claude', 'codex']) {
     const binaryPath = await resolveBinaryOnPath(binaryName)
@@ -727,7 +729,8 @@ app.whenReady().then(async () => {
     controlStateService,
     embeddingService,
     exportService,
-    frameExtractionService
+    frameExtractionService,
+    imageGenerationService
   )
   apiBridge.start()
   Menu.setApplicationMenu(buildApplicationMenu())
@@ -1430,6 +1433,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('editor:removeEffect', async (_, clipId: string, effectId: string) => {
     return projectStore.removeClipEffect(clipId, effectId)
+  })
+
+  ipcMain.handle('editor:updateEffectParameters', async (_, clipId: string, effectId: string, parameters: Record<string, unknown>) => {
+    return projectStore.setClipEffectParameters(clipId, effectId, parameters)
   })
 
   ipcMain.handle('editor:setClipVolume', async (_, clipId: string, volume: number) => {
