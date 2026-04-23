@@ -371,6 +371,8 @@ export function PreviewMonitor({
   const [resolvedPreviewPaths, setResolvedPreviewPaths] = useState<Record<string, { path: string; cacheKey: string }>>({})
 
   const getPreviewCacheKey = (previewAsset: Pick<MediaAsset, 'path' | 'type'>) => `${previewAsset.type}:${previewAsset.path}`
+  const isPlayheadInsideClip = (clip: { startTime: number; duration: number }, time: number) =>
+    time >= clip.startTime && time < clip.startTime + clip.duration
 
   const videoClips = useMemo(
     () =>
@@ -393,14 +395,14 @@ export function PreviewMonitor({
 
   const selectedClip = previewClips.find((clip) => clip.id === selectedClipId) ?? null
   const playheadClip =
-    previewClips.find((clip) => playheadTime >= clip.startTime && playheadTime <= clip.startTime + clip.duration) ?? null
+    previewClips.find((clip) => isPlayheadInsideClip(clip, playheadTime)) ?? null
   const previewClip = playheadClip ?? selectedClip
   const activeVideoLayers = useMemo(
     () =>
       tracks
         .filter((track) => track.type === 'video')
         .map((track, trackIndex) => {
-          const clip = track.clips.find((candidate) => playheadTime >= candidate.startTime && playheadTime <= candidate.startTime + candidate.duration)
+          const clip = track.clips.find((candidate) => isPlayheadInsideClip(candidate, playheadTime))
           if (!clip) return null
           const asset = assets.find((candidate) => candidate.id === clip.assetId)
           if (!asset) return null
@@ -419,9 +421,9 @@ export function PreviewMonitor({
     [assets, playheadTime, tracks]
   )
   const timelineAsset = previewClip ? assets.find((candidate) => candidate.id === previewClip.assetId) : undefined
-  const shouldPreferSelectedAsset = Boolean(selectedAsset && selectedAsset.id !== timelineAsset?.id)
+  const shouldPreferSelectedAsset = Boolean(selectedAsset && selectedAsset.id !== timelineAsset?.id && !playheadClip)
   const renderedVideoLayers = shouldPreferSelectedAsset ? [] : activeVideoLayers
-  const asset = selectedAsset ?? timelineAsset ?? assets[0]
+  const asset = shouldPreferSelectedAsset ? selectedAsset : timelineAsset ?? selectedAsset ?? assets[0]
 
   const previewAssets = useMemo(
     () =>

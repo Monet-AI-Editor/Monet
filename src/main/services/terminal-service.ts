@@ -45,7 +45,7 @@ export class TerminalService {
       CLICOLOR: '1',
       CLICOLOR_FORCE: '1',
       TERM_PROGRAM: 'Monet',
-      TERM_PROGRAM_VERSION: process.env.npm_package_version || '0.1.1',
+      TERM_PROGRAM_VERSION: process.env.npm_package_version || '0.1.2',
       AI_VIDEO_EDITOR_ROOT: process.cwd()
     }
     delete env.NO_COLOR

@@ -40,6 +40,7 @@ function buildGuideBody(summary: AgentContextProjectSummary): string {
   return `# Monet Agent Context
 
 Monet is an AI-first video editor. You are running inside Monet's built-in terminal.
+You do not need the user to explicitly tell you that you are inside Monet. Treat this shell as Monet unless the user clearly redirects you elsewhere.
 
 ## Current Monet project
 
@@ -143,6 +144,7 @@ Use Monet's live control surface first:
 - only then the local API bridge on \`http://localhost:51847\` as a fallback
 
 If the user refers to "the app" or "the current project", inspect Monet's live editor state with \`editorctl\` before searching the surrounding filesystem.
+Do not wait for the user to explain that they are inside Monet. Default to Monet live state first.
 Do not improvise localhost commands or endpoints when \`editorctl\` already supports the task.
 `
 }
@@ -157,6 +159,7 @@ Use Monet's built-in control surface first:
 - MCP tools if available
 - only then the local API bridge on \`http://localhost:51847\` as a fallback
 
+Assume this shell belongs to Monet unless the user clearly says otherwise.
 Do not default to asking the user to click Import if you can import files yourself from an absolute path.
 Do not improvise raw localhost commands when \`editorctl\` already supports the operation.
 `

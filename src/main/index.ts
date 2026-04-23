@@ -421,25 +421,42 @@ async function resolveBinaryOnPath(binaryName: string): Promise<string | null> {
   return null
 }
 
-function buildAgentWrapperScript(binaryName: string, binaryPath: string, startupPrompt: string): string {
-  const escapedBinaryPath = binaryPath.replace(/"/g, '\\"')
+function buildAgentWrapperScript(binaryName: string, startupPrompt: string): string {
   const escapedPrompt = startupPrompt.replace(/"/g, '\\"')
 
   if (binaryName === 'claude') {
     return `#!/bin/sh
-if [ "$#" -eq 0 ]; then
-  exec "${escapedBinaryPath}" --append-system-prompt "${escapedPrompt}"
-else
-  exec "${escapedBinaryPath}" "$@"
+SELF_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+ORIGINAL_PATH="$(printf '%s' "$PATH" | awk -v self="$SELF_DIR" 'BEGIN{RS=":"; ORS=":"} $0 != self { print }' | sed 's/:$//')"
+if [ -n "$ORIGINAL_PATH" ]; then
+  PATH="$ORIGINAL_PATH"
+  export PATH
 fi
+TARGET="$(command -v claude)"
+if [ -z "$TARGET" ]; then
+  echo "claude could not be found on PATH." >&2
+  exit 1
+fi
+exec "$TARGET" --append-system-prompt "${escapedPrompt}" "$@"
 `
   }
 
   return `#!/bin/sh
+SELF_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+ORIGINAL_PATH="$(printf '%s' "$PATH" | awk -v self="$SELF_DIR" 'BEGIN{RS=":"; ORS=":"} $0 != self { print }' | sed 's/:$//')"
+if [ -n "$ORIGINAL_PATH" ]; then
+  PATH="$ORIGINAL_PATH"
+  export PATH
+fi
+TARGET="$(command -v codex)"
+if [ -z "$TARGET" ]; then
+  echo "codex could not be found on PATH." >&2
+  exit 1
+fi
 if [ "$#" -eq 0 ]; then
-  exec "${escapedBinaryPath}" "${escapedPrompt}"
+  exec "$TARGET" "${escapedPrompt}"
 else
-  exec "${escapedBinaryPath}" "$@"
+  exec "$TARGET" "$@"
 fi
 `
 }
@@ -471,13 +488,11 @@ exit 1
   await chmod(shimPath, 0o755)
 
   const startupPrompt =
-    'You are inside Monet, an AI-first video editor. Read ./MONET_AGENT_CONTEXT.md first. For any question about the current project, assets, screenshots, images, timeline, or "the app", inspect Monet live state before answering. Start with editorctl get-state and editorctl list-assets. Prefer editorctl over raw localhost API calls. Only fall back to the Monet API bridge if editorctl does not expose the operation or editorctl is failing. Do not guess localhost commands or endpoints. Do not begin by searching the surrounding filesystem unless the user explicitly asks about files on disk outside Monet.'
+    'You are already inside Monet, an AI-first video editor, in Monet\\\'s built-in terminal. Assume questions are about Monet\\\'s current live project unless the user clearly says otherwise. Read ./MONET_AGENT_CONTEXT.md first. Before answering any request about the app, the project, screenshots, assets, clips, media, or timeline, inspect live state with editorctl get-state and editorctl list-assets. Prefer editorctl over raw localhost API calls. Only fall back to the Monet API bridge if editorctl does not expose the operation or editorctl is failing. Do not guess localhost commands or endpoints. Do not begin by searching the surrounding filesystem unless the user explicitly asks about files on disk outside Monet.'
 
   for (const binaryName of ['claude', 'codex']) {
-    const binaryPath = await resolveBinaryOnPath(binaryName)
-    if (!binaryPath) continue
     const wrapperPath = join(binDir, binaryName)
-    await writeFile(wrapperPath, buildAgentWrapperScript(binaryName, binaryPath, startupPrompt), 'utf8')
+    await writeFile(wrapperPath, buildAgentWrapperScript(binaryName, startupPrompt), 'utf8')
     await chmod(wrapperPath, 0o755)
   }
 
@@ -1062,8 +1077,9 @@ app.whenReady().then(async () => {
       })
 
     const settings = await settingsStore.getSettings()
+    const openAiKey = settings.apiKeys.openai || settings.semanticApiKeys.openai
     const canUseLocal = transcriptionService.isLocalAvailable()
-    if (!canUseLocal && !settings.apiKeys.openai) {
+    if (!canUseLocal && !openAiKey) {
       projectStore.updateTask(task.id, {
         status: 'error',
         progress: 1,
@@ -1082,8 +1098,8 @@ app.whenReady().then(async () => {
         label: `Transcribing ${asset.name}`
       })
 
-      if (settings.apiKeys.openai) {
-        transcriptionService.setApiKey(settings.apiKeys.openai)
+      if (openAiKey) {
+        transcriptionService.setApiKey(openAiKey)
       }
       const segments = await transcriptionService.transcribeAudio(asset.path, options.language)
 
@@ -1143,6 +1159,33 @@ app.whenReady().then(async () => {
     }
   }
 
+  function queueAutomaticEmbeddingJobs(imported: MediaAssetRecord[]): void {
+    void syncEmbeddingKey()
+      .then(async () => {
+        if (!embeddingService.isReady) return
+        const immediateAssets = imported.filter((asset) => !isTranscribableAsset(asset))
+        if (immediateAssets.length === 0) return
+        const assetResults = await embeddingService.embedAssets(immediateAssets.filter((asset) => !asset.semantic.vector))
+        const segmentResults = await embeddingService.embedAssetSegments(immediateAssets)
+        for (const { id, vector } of assetResults) {
+          projectStore.updateAssetVector(id, vector)
+        }
+        for (const asset of immediateAssets) {
+          const vectors = segmentResults
+            .filter((result) => result.assetId === asset.id)
+            .map((result) => ({ segmentId: result.segmentId, vector: result.vector }))
+          if (vectors.length > 0) projectStore.updateAssetSegmentVectors(asset.id, vectors)
+        }
+      })
+      .catch((err) => console.warn('[Embedding] Auto-embed failed:', err))
+  }
+
+  function enqueueAutomaticImportProcessing(imported: MediaAssetRecord[]): void {
+    if (imported.length === 0) return
+    void queueAutomaticIngestionJobs(imported)
+    queueAutomaticEmbeddingJobs(imported)
+  }
+
   function hasCaptionClipsForAsset(assetId: string): boolean {
     const project = projectStore.getProject()
     const activeSequence = project.sequences.find((sequence) => sequence.active) ?? project.sequences[0]
@@ -1174,25 +1217,7 @@ app.whenReady().then(async () => {
       audioCount: imported.filter((asset) => asset.type === 'audio').length,
       imageCount: imported.filter((asset) => asset.type === 'image').length
     })
-    void queueAutomaticIngestionJobs(imported)
-    void syncEmbeddingKey()
-      .then(async () => {
-        if (!embeddingService.isReady) return
-        const immediateAssets = imported.filter((asset) => !isTranscribableAsset(asset))
-        if (immediateAssets.length === 0) return
-        const assetResults = await embeddingService.embedAssets(immediateAssets.filter((asset) => !asset.semantic.vector))
-        const segmentResults = await embeddingService.embedAssetSegments(immediateAssets)
-        for (const { id, vector } of assetResults) {
-          projectStore.updateAssetVector(id, vector)
-        }
-        for (const asset of immediateAssets) {
-          const vectors = segmentResults
-            .filter((result) => result.assetId === asset.id)
-            .map((result) => ({ segmentId: result.segmentId, vector: result.vector }))
-          if (vectors.length > 0) projectStore.updateAssetSegmentVectors(asset.id, vectors)
-        }
-      })
-      .catch((err) => console.warn('[Embedding] Auto-embed failed:', err))
+    enqueueAutomaticImportProcessing(imported)
     return imported
   })
 

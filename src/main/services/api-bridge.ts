@@ -462,8 +462,9 @@ export class APIBridge {
       })
 
     const settings = await this.settingsStore.getSettings()
+    const openAiKey = settings.apiKeys.openai || settings.semanticApiKeys.openai
     const canUseLocal = this.transcriptionService.isLocalAvailable()
-    if (!canUseLocal && !settings.apiKeys.openai) {
+    if (!canUseLocal && !openAiKey) {
       this.projectStore.updateTask(task.id, {
         status: 'error',
         progress: 1,
@@ -480,8 +481,8 @@ export class APIBridge {
         progress: 0.1,
         label: `Transcribing ${asset.name}`
       })
-      if (settings.apiKeys.openai) {
-        this.transcriptionService.setApiKey(settings.apiKeys.openai)
+      if (openAiKey) {
+        this.transcriptionService.setApiKey(openAiKey)
       }
       const segments = await this.transcriptionService.transcribeAudio(asset.path, options.language)
       this.projectStore.updateTask(task.id, {
@@ -530,6 +531,35 @@ export class APIBridge {
         console.warn(`[API Bridge] Automatic transcription failed for ${asset.id}:`, error)
       })
     }
+  }
+
+  private queueAutomaticEmbeddingJobs(imported: MediaAssetRecord[]): void {
+    if (!this.embeddingService) return
+    void this.syncEmbeddingKey()
+      .then(async () => {
+        if (!this.embeddingService?.isReady) return
+        const immediateAssets = imported.filter((asset) => !this.isTranscribableAsset(asset))
+        if (immediateAssets.length === 0) return
+        const assetResults = await this.embeddingService.embedAssets(immediateAssets.filter((asset) => !asset.semantic.vector))
+        const segmentResults = await this.embeddingService.embedAssetSegments(immediateAssets)
+        for (const { id, vector } of assetResults) {
+          this.projectStore.updateAssetVector(id, vector)
+        }
+        for (const asset of immediateAssets) {
+          const vectors = segmentResults
+            .filter((result) => result.assetId === asset.id)
+            .map((result) => ({ segmentId: result.segmentId, vector: result.vector }))
+          if (vectors.length > 0) this.projectStore.updateAssetSegmentVectors(asset.id, vectors)
+        }
+        this.pushProjectUpdate()
+      })
+      .catch((err) => console.warn('[API Bridge] Auto-embed failed:', err))
+  }
+
+  private enqueueAutomaticImportProcessing(imported: MediaAssetRecord[]): void {
+    if (imported.length === 0) return
+    this.queueAutomaticIngestionJobs(imported)
+    this.queueAutomaticEmbeddingJobs(imported)
   }
 
   private async handleCommand(command: string, args: any = {}): Promise<any> {
@@ -667,28 +697,7 @@ export class APIBridge {
       case 'import_files': {
         if (!Array.isArray(args.paths)) throw new Error('paths array required')
         const imported = this.projectStore.importFiles(args.paths)
-        this.queueAutomaticIngestionJobs(imported)
-        if (this.embeddingService) {
-          void this.syncEmbeddingKey()
-            .then(async () => {
-              if (!this.embeddingService?.isReady) return
-              const immediateAssets = imported.filter((asset) => !this.isTranscribableAsset(asset))
-              if (immediateAssets.length === 0) return
-              const assetResults = await this.embeddingService.embedAssets(immediateAssets.filter((asset) => !asset.semantic.vector))
-              const segmentResults = await this.embeddingService.embedAssetSegments(immediateAssets)
-              for (const { id, vector } of assetResults) {
-                this.projectStore.updateAssetVector(id, vector)
-              }
-              for (const asset of immediateAssets) {
-                const vectors = segmentResults
-                  .filter((result) => result.assetId === asset.id)
-                  .map((result) => ({ segmentId: result.segmentId, vector: result.vector }))
-                if (vectors.length > 0) this.projectStore.updateAssetSegmentVectors(asset.id, vectors)
-              }
-              this.pushProjectUpdate()
-            })
-            .catch((err) => console.warn('[API Bridge] Auto-embed failed:', err))
-        }
+        this.enqueueAutomaticImportProcessing(imported)
         this.pushProjectUpdate()
         return imported
       }
