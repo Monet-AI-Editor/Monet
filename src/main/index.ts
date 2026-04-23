@@ -342,9 +342,12 @@ function getCurrentAppBundlePath(): string {
 async function replaceAppAndRelaunch(newAppBundlePath: string): Promise<void> {
   const currentAppPath = getCurrentAppBundlePath()
 
+  const executablePath = join(currentAppPath, 'Contents', 'MacOS', basename(process.execPath))
+
   const script = `#!/bin/bash
 CURRENT="${currentAppPath}"
 NEW="${newAppBundlePath}"
+EXEC="${executablePath}"
 
 # Wait for the app to fully quit (up to 10 seconds)
 for i in $(seq 1 20); do
@@ -358,11 +361,11 @@ sleep 0.3
 rm -rf "$CURRENT"
 cp -R "$NEW" "$CURRENT"
 
-# Clear quarantine so macOS doesn't block the relaunch
+# Clear quarantine and any existing code signature checks
 xattr -cr "$CURRENT" 2>/dev/null || true
 
-# Relaunch
-open "$CURRENT"
+# Launch directly via the binary to skip LaunchServices Gatekeeper check
+exec "$EXEC"
 `
 
   const scriptPath = join(tmpdir(), 'monet-update-relaunch.sh')
@@ -1136,7 +1139,7 @@ app.whenReady().then(async () => {
       await rm(extractDir, { recursive: true, force: true })
       await mkdir(extractDir, { recursive: true })
       await new Promise<void>((resolve, reject) => {
-        execFile('unzip', ['-q', '-o', zipPath, '-d', extractDir], (err) => {
+        execFile('ditto', ['-x', '-k', zipPath, extractDir], (err) => {
           if (err) reject(err)
           else resolve()
         })
