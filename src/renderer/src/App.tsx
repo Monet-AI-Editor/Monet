@@ -42,7 +42,8 @@ export default function App() {
     status: 'idle',
     availableVersion: null,
     currentVersion: '0.0.0',
-    source: 'none'
+    source: 'none',
+    downloadProgress: null
   })
   const [showSettings, setShowSettings] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
@@ -216,6 +217,8 @@ export default function App() {
           persistAISettings={store.persistAISettings}
           onOpenProjects={() => setShowProjectManager(true)}
           onEnterWorkspace={handleEnterWorkspace}
+          appUpdateState={appUpdateState}
+          onApplyUpdate={() => void window.api.applyUpdate()}
         />
       ) : (
         <>

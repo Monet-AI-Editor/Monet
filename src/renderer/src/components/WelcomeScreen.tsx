@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { ChevronRight, Clock, FilePlus2, FolderOpen, KeyRound, RotateCcw, TerminalSquare } from 'lucide-react'
+import { ChevronRight, Clock, FilePlus2, FolderOpen, KeyRound, RefreshCw, RotateCcw, TerminalSquare } from 'lucide-react'
 import clsx from 'clsx'
 import type { EditorActions, EditorState } from '../store/useEditorStore'
+import type { AppUpdateState } from '../types'
 
 type Props = Pick<EditorState, 'projectManager'> &
   Pick<EditorState, 'projectName' | 'projectFilePath' | 'assets' | 'sequences' | 'aiSettings'> &
@@ -9,6 +10,8 @@ type Props = Pick<EditorState, 'projectManager'> &
     loading?: boolean
     onOpenProjects: () => void
     onEnterWorkspace: () => void
+    appUpdateState?: AppUpdateState
+    onApplyUpdate?: () => void
   }
 
 type AnalyticsChoice = 'enabled' | 'disabled' | null
@@ -37,7 +40,9 @@ export function WelcomeScreen({
   setOnboardingCompleted,
   persistAISettings,
   onOpenProjects,
-  onEnterWorkspace
+  onEnterWorkspace,
+  appUpdateState,
+  onApplyUpdate
 }: Props) {
   const [analyticsChoice, setAnalyticsChoice] = useState<AnalyticsChoice>(null)
   const [savingSetup, setSavingSetup] = useState(false)
@@ -307,6 +312,41 @@ export function WelcomeScreen({
             </>
           )}
         </div>
+
+        {!showOnboarding && appUpdateState && (appUpdateState.status === 'available' || appUpdateState.status === 'downloading' || appUpdateState.status === 'downloaded') && (
+          <div className="border-t border-white/[0.06] px-7 py-3 flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] font-medium text-white/70">
+                {appUpdateState.status === 'available'
+                  ? `Monet ${appUpdateState.availableVersion} is available`
+                  : appUpdateState.status === 'downloading'
+                  ? `Downloading Monet ${appUpdateState.availableVersion}…`
+                  : `Monet ${appUpdateState.availableVersion} downloaded`}
+              </div>
+              {appUpdateState.status === 'downloading' && appUpdateState.downloadProgress !== null && (
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-blue-400 transition-[width] duration-200"
+                    style={{ width: `${Math.round(appUpdateState.downloadProgress * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+            <button
+              onClick={onApplyUpdate}
+              disabled={appUpdateState.status !== 'available'}
+              className={clsx(
+                'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-colors flex-shrink-0',
+                appUpdateState.status === 'available'
+                  ? 'bg-blue-500 text-white hover:bg-blue-400'
+                  : 'bg-blue-500/40 text-white/50 cursor-wait'
+              )}
+            >
+              <RefreshCw size={11} className={clsx(appUpdateState.status === 'downloading' && 'animate-spin')} />
+              {appUpdateState.status === 'available' ? 'Update' : appUpdateState.status === 'downloading' ? 'Downloading…' : 'Done'}
+            </button>
+          </div>
+        )}
 
         {!showOnboarding && (
           <div className="flex items-center justify-between border-t border-white/[0.06] px-7 py-3 text-[10px] text-white/20">

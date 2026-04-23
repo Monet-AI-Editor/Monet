@@ -24,6 +24,7 @@ declare global {
         currentVersion: string
         source: 'none' | 'dev-simulated' | 'github-release'
         message?: string
+        downloadProgress: number | null
       }>
       checkForUpdates: () => Promise<{
         status: 'idle' | 'available' | 'downloading' | 'downloaded' | 'restarting' | 'error'
@@ -31,6 +32,7 @@ declare global {
         currentVersion: string
         source: 'none' | 'dev-simulated' | 'github-release'
         message?: string
+        downloadProgress: number | null
       }>
       zoomIn: () => number
       zoomOut: () => number
@@ -41,6 +43,7 @@ declare global {
         currentVersion: string
         source: 'none' | 'dev-simulated' | 'github-release'
         message?: string
+        downloadProgress: number | null
       }>
       trackAnalytics: (name: string, payload?: Record<string, string | number | boolean | null>) => Promise<void>
       getEditorBootstrap: () => Promise<{
@@ -107,6 +110,7 @@ declare global {
         currentVersion: string
         source: 'none' | 'dev-simulated' | 'github-release'
         message?: string
+        downloadProgress: number | null
       }) => void) => () => void
       onExportProgress: (listener: (progress: ExportProgressState) => void) => () => void
       toFileUrl: (filePath: string) => string

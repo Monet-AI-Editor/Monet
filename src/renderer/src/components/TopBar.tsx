@@ -63,10 +63,15 @@ export function TopBar({
     appUpdateState.status === 'downloaded' ||
     appUpdateState.status === 'restarting'
 
+  const downloadPct =
+    appUpdateState.status === 'downloading' && appUpdateState.downloadProgress !== null
+      ? ` ${Math.round(appUpdateState.downloadProgress * 100)}%`
+      : ''
+
   const updateLabel =
     appUpdateState.status === 'available' ? 'Update' :
-    appUpdateState.status === 'downloading' ? 'Downloading…' :
-    appUpdateState.status === 'downloaded' ? 'Restarting…' :
+    appUpdateState.status === 'downloading' ? `Downloading…${downloadPct}` :
+    appUpdateState.status === 'downloaded' ? 'Install' :
     appUpdateState.status === 'restarting' ? 'Restarting…' :
     ''
 

@@ -150,6 +150,7 @@ export interface AppUpdateState {
   currentVersion: string
   source: 'none' | 'dev-simulated' | 'github-release'
   message?: string
+  downloadProgress: number | null
 }
 
 export type ExportProgressStage = 'preparing' | 'rendering' | 'finalizing' | 'done'

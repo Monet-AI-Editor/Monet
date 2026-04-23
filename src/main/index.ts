@@ -1,12 +1,15 @@
 import { initialize as initializeAptabase } from '@aptabase/electron/main'
 import * as SentryMain from '@sentry/electron/main'
 import { app, shell, BrowserWindow, ipcMain, dialog, net, protocol, powerMonitor, Menu, nativeImage } from 'electron'
-import { createReadStream } from 'fs'
-import { join, extname, basename, dirname } from 'path'
-import { readFile, writeFile, stat, readdir, mkdir, chmod, access, rename } from 'fs/promises'
+import { createReadStream, createWriteStream } from 'fs'
+import { join, extname, basename, dirname, resolve as resolvePath } from 'path'
+import { readFile, writeFile, stat, readdir, mkdir, chmod, access, rename, rm } from 'fs/promises'
 import { Readable } from 'stream'
 import { createHash } from 'crypto'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import * as https from 'https'
+import * as http from 'http'
+import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ProjectStore } from './services/project-store'
 import { ToolRegistry } from './services/tool-registry'
@@ -165,23 +168,17 @@ function buildApplicationMenu(): Menu {
 
                 await dialog.showMessageBox({
                   type: state.status === 'available' ? 'info' : 'none',
-                  buttons: state.status === 'available' ? ['Download', 'Later'] : ['OK'],
+                  buttons: state.status === 'available' ? ['Update', 'Later'] : ['OK'],
                   title: 'Update status',
                   message: state.message || 'Update state changed.',
-                  detail:
-                    state.status === 'available'
-                      ? `Monet ${state.availableVersion} is available. You can download it now or use the update button in the top bar.`
-                      : state.status === 'downloading' || state.status === 'downloaded' || state.status === 'restarting'
-                        ? 'Monet is already applying an update.'
-                        : ''
+                  detail: state.status === 'available'
+                    ? `Monet ${state.availableVersion} is available. Click Update to download and restart.`
+                    : state.status === 'downloading' || state.status === 'downloaded' || state.status === 'restarting'
+                      ? 'Monet is already applying an update.'
+                      : ''
                 }).then(async (result) => {
                   if (state.status === 'available' && result.response === 0) {
-                    await updateService.applyUpdate({
-                      onRestart: () => undefined,
-                      openExternal: async (url) => {
-                        await shell.openExternal(url)
-                      }
-                    })
+                    await doApplyUpdate()
                   }
                 })
               }
@@ -296,6 +293,84 @@ function safeBroadcast(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
     safeSendToWindow(window, channel, payload)
   }
+}
+
+async function downloadFileToPath(
+  url: string,
+  destPath: string,
+  onProgress: (fraction: number) => void,
+  redirectCount = 0
+): Promise<void> {
+  if (redirectCount > 10) throw new Error('Too many redirects')
+
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url)
+    const transport = parsedUrl.protocol === 'https:' ? https : http
+    const fileStream = createWriteStream(destPath)
+
+    const req = transport.get(url, { headers: { 'User-Agent': `Monet/${app.getVersion()}` } }, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        fileStream.destroy()
+        resolve(downloadFileToPath(res.headers.location, destPath, onProgress, redirectCount + 1))
+        return
+      }
+      if (res.statusCode !== 200) {
+        fileStream.destroy()
+        reject(new Error(`Download failed: HTTP ${res.statusCode}`))
+        return
+      }
+
+      const total = parseInt(res.headers['content-length'] || '0', 10)
+      let received = 0
+      res.on('data', (chunk: Buffer) => {
+        received += chunk.length
+        if (total > 0) onProgress(received / total)
+      })
+      res.pipe(fileStream)
+      fileStream.on('finish', () => resolve())
+      fileStream.on('error', (err) => { fileStream.destroy(); reject(err) })
+    })
+    req.on('error', (err) => { fileStream.destroy(); reject(err) })
+  })
+}
+
+function getCurrentAppBundlePath(): string {
+  // process.execPath = /path/to/Monet.app/Contents/MacOS/Monet
+  return resolvePath(process.execPath, '../../..')
+}
+
+async function replaceAppAndRelaunch(newAppBundlePath: string): Promise<void> {
+  const currentAppPath = getCurrentAppBundlePath()
+
+  const script = `#!/bin/bash
+CURRENT="${currentAppPath}"
+NEW="${newAppBundlePath}"
+
+# Wait for the app to fully quit (up to 10 seconds)
+for i in $(seq 1 20); do
+  if ! pgrep -xq "Monet"; then break; fi
+  sleep 0.5
+done
+
+sleep 0.3
+
+# Replace the app bundle
+rm -rf "$CURRENT"
+cp -R "$NEW" "$CURRENT"
+
+# Clear quarantine so macOS doesn't block the relaunch
+xattr -cr "$CURRENT" 2>/dev/null || true
+
+# Relaunch
+open "$CURRENT"
+`
+
+  const scriptPath = join(tmpdir(), 'monet-update-relaunch.sh')
+  await writeFile(scriptPath, script, 'utf8')
+  await chmod(scriptPath, 0o755)
+
+  const child = spawn('/bin/bash', [scriptPath], { detached: true, stdio: 'ignore' })
+  child.unref()
 }
 
 function getProjectAutosavePath(projectPath: string | null): string {
@@ -1007,22 +1082,88 @@ app.whenReady().then(async () => {
     return updateService.checkForUpdates()
   })
 
-  ipcMain.handle('app:applyUpdate', async () => {
-    return updateService.applyUpdate({
-      onRestart: () => {
-        if (editorWindow && !editorWindow.isDestroyed()) {
-          editorWindow.reload()
-          editorWindow.focus()
-        } else if (launcherWindow && !launcherWindow.isDestroyed()) {
-          launcherWindow.reload()
-          launcherWindow.focus()
+  async function doApplyUpdate(): Promise<AppUpdateState> {
+    const state = updateService.getState()
+
+    if (state.source === 'dev-simulated') {
+      let progress = 0
+      updateService.setStatus('downloading', 'Downloading update…')
+      updateService.setDownloadProgress(0)
+      safeBroadcast('app:updateState', updateService.getState())
+      await new Promise<void>((resolve) => {
+        const tick = () => {
+          progress = Math.min(progress + 0.18, 1)
+          updateService.setDownloadProgress(progress)
+          safeBroadcast('app:updateState', updateService.getState())
+          if (progress < 1) setTimeout(tick, 120)
+          else resolve()
         }
-      },
-      openExternal: async (url) => {
-        await shell.openExternal(url)
-      }
-    })
-  })
+        setTimeout(tick, 120)
+      })
+      updateService.setStatus('restarting', 'Restarting…')
+      safeBroadcast('app:updateState', updateService.getState())
+      setTimeout(() => { app.relaunch(); app.quit() }, 700)
+      return updateService.getState()
+    }
+
+    if (state.source !== 'github-release') return updateService.getState()
+
+    const release = updateService.getLatestRelease()
+    if (!release) return updateService.getState()
+
+    if (!release.zipUrl) {
+      await shell.openExternal(release.htmlUrl)
+      return updateService.getState()
+    }
+
+    const zipPath = join(tmpdir(), `Monet-update-${release.version}.zip`)
+    const extractDir = join(tmpdir(), `Monet-update-${release.version}`)
+
+    updateService.setStatus('downloading', `Downloading Monet ${release.version}…`)
+    updateService.setDownloadProgress(0)
+    safeBroadcast('app:updateState', updateService.getState())
+
+    try {
+      await downloadFileToPath(release.zipUrl, zipPath, (progress) => {
+        updateService.setDownloadProgress(progress)
+        safeBroadcast('app:updateState', updateService.getState())
+      })
+
+      updateService.setStatus('downloading', 'Extracting update…')
+      updateService.setDownloadProgress(1)
+      safeBroadcast('app:updateState', updateService.getState())
+
+      await rm(extractDir, { recursive: true, force: true })
+      await mkdir(extractDir, { recursive: true })
+      await new Promise<void>((resolve, reject) => {
+        execFile('unzip', ['-q', '-o', zipPath, '-d', extractDir], (err) => {
+          if (err) reject(err)
+          else resolve()
+        })
+      })
+
+      const entries = await readdir(extractDir)
+      const appEntry = entries.find((e) => e.endsWith('.app'))
+      if (!appEntry) throw new Error('No .app bundle found in update ZIP')
+
+      updateService.setStatus('restarting', `Installing Monet ${release.version} and restarting…`)
+      safeBroadcast('app:updateState', updateService.getState())
+
+      await replaceAppAndRelaunch(join(extractDir, appEntry))
+      setTimeout(() => app.quit(), 800)
+    } catch (error) {
+      console.error('[Update] Failed:', error)
+      await rm(zipPath, { force: true }).catch(() => undefined)
+      await rm(extractDir, { recursive: true, force: true }).catch(() => undefined)
+      updateService.setStatus('error', error instanceof Error ? error.message : 'Update failed.')
+      updateService.setDownloadProgress(null)
+      safeBroadcast('app:updateState', updateService.getState())
+    }
+
+    return updateService.getState()
+  }
+
+  ipcMain.handle('app:applyUpdate', () => doApplyUpdate())
 
   ipcMain.handle('analytics:track', async (_, name: string, payload?: Record<string, string | number | boolean | null>) => {
     const settings = await settingsStore.getSettings()
