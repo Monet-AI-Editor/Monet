@@ -91,30 +91,72 @@ Before acting on any new request, refresh your understanding with live state com
 
 ## Key commands
 
-- \`editorctl import <path...>\`
+### Project & state
+- \`editorctl get-state\`
 - \`editorctl list-assets\`
 - \`editorctl list-sequences\`
 - \`editorctl list-tracks [sequenceId]\`
 - \`editorctl list-clips [sequenceId]\`
-- \`editorctl get-state\`
+- \`editorctl list-markers [sequenceId]\`
+- \`editorctl get-asset-segments <assetId>\`
+- \`editorctl import <path...>\`
+
+### Sequences
+- \`editorctl activate-sequence <sequenceId>\`
 - \`editorctl set-sequence-size <width> <height> [sequenceId]\`
+
+### Tracks & clips
 - \`editorctl add-track <video|audio|caption>\`
 - \`editorctl add-clip <assetId> <trackId> <startTime> [duration] [inPoint]\`
 - \`editorctl move-clip <clipId> <startTime>\`
 - \`editorctl trim-clip <clipId> [inPoint] [duration] [startTime]\`
 - \`editorctl split-clip <clipId> <time>\`
 - \`editorctl duplicate-clip <clipId> [offsetSeconds]\`
+- \`editorctl rename-clip <clipId> <label>\`
 - \`editorctl remove-clip <clipId>\`
 - \`editorctl ripple-delete-clip <clipId>\`
+- \`editorctl ripple-insert-gap <time> <duration> [sequenceId]\`
+
+### Effects & properties
+- \`editorctl add-effect <clipId> <effectType> [key=value...]\`
+  - effect types: \`fade_in\`, \`fade_out\`, \`color_grade\`, \`blur\`, \`sharpen\`, \`transform\`, \`opacity\`, \`blend_mode\`, \`text_overlay\`, \`speed_ramp\`, \`drop_shadow\`, \`glow\`, \`chroma_key\`
+  - examples: \`add-effect clip_1 color_grade brightness=0.1 contrast=1.2 saturation=1.1\`
+  - examples: \`add-effect clip_1 fade_in duration=1.0\`
+  - examples: \`add-effect clip_1 text_overlay text="Hello" x=100 y=100 fontSize=48\`
+- \`editorctl set-effect-keyframes <clipId> <effectId> <json>\`
+- \`editorctl set-speed <clipId> <speed>\` — 0.1x to 10x
+- \`editorctl set-volume <clipId> <volume>\` — 0 to 2 (1 = normal, 2 = 200%)
+
+### Transitions
+- \`editorctl set-transition <clipId> <in|out> <type|null> [duration]\`
+  - types: \`crossfade\`, \`dip_to_black\`, \`wipe\`, \`slide\`
+  - example: \`set-transition clip_1 out crossfade 0.5\`
+
+### Markers & captions
 - \`editorctl add-marker <time> <label> [duration] [color] [seqId]\`
-- \`editorctl generate-captions <assetId> [seqId]\`
-- \`editorctl transcribe <assetId> [language]\`
+- \`editorctl remove-marker <markerId> [sequenceId]\`
+- \`editorctl generate-captions <assetId> [sequenceId]\`
+
+### Search & AI
 - \`editorctl search-segments "<query>" [limit]\`
+- \`editorctl batch-selects "<query>" [limit] [padding] [sequenceName]\` — auto-create selects sequence from search
+- \`editorctl batch-markers "<query>" [limit] [seqId]\` — auto-place markers from search
+- \`editorctl transcribe <assetId> [language]\`
 - \`editorctl generate-image "<prompt>" [size] [quality] [background] [format] [moderation=auto|low] [outputCompression=0-100] [partialImages=0-3]\`
 - \`editorctl edit-image "<prompt>" <input1> [input2...] [size=...] [quality=...] [background=...] [format=...] [outputCompression=...] [partialImages=...] [inputFidelity=low|high] [mask=<assetId|path>]\`
+
+### Utilities
 - \`editorctl extract-frames <assetId> [count]\`
 - \`editorctl contact-sheet <assetId> [count]\`
+- \`editorctl set-playhead <time>\`
+- \`editorctl select-clip <clipId|none>\`
+- \`editorctl select-asset <assetId|none>\`
 - \`editorctl export /absolute/output/path.mp4 [quality] [resolution] [format]\`
+
+### API bridge only (no editorctl equivalent)
+- undo: \`curl -s -X POST http://localhost:51847 -H "Content-Type: application/json" -d '{"command":"undo"}'\`
+- redo: \`curl -s -X POST http://localhost:51847 -H "Content-Type: application/json" -d '{"command":"redo"}'\`
+- embed assets: \`curl -s -X POST http://localhost:51847 -H "Content-Type: application/json" -d '{"command":"embed-assets"}'\`
 
 ## API bridge fallback examples
 
@@ -199,6 +241,23 @@ Or use MCP tools (auto-import included):
 
 Duration is in frames (30fps default). 30 frames = 1 second.
 Add new compositions in \`$AI_VIDEO_EDITOR_ROOT/remotion/src/compositions/\` and register in \`Root.tsx\`.
+
+## Full editorctl reference
+
+Effects: \`add-effect <clipId> <type> [key=value...]\`
+- types: \`fade_in\`, \`fade_out\`, \`color_grade\`, \`blur\`, \`sharpen\`, \`transform\`, \`opacity\`, \`blend_mode\`, \`text_overlay\`, \`speed_ramp\`, \`drop_shadow\`, \`glow\`, \`chroma_key\`
+
+Speed & volume: \`set-speed <clipId> <0.1–10>\` · \`set-volume <clipId> <0–2>\`
+
+Transitions: \`set-transition <clipId> <in|out> <crossfade|dip_to_black|wipe|slide|null> [duration]\`
+
+Keyframes: \`set-effect-keyframes <clipId> <effectId> <json>\`
+
+Batch AI: \`batch-selects "<query>" [limit] [padding] [sequenceName]\` · \`batch-markers "<query>" [limit] [seqId]\`
+
+Misc: \`activate-sequence <seqId>\` · \`rename-clip <clipId> <label>\` · \`ripple-insert-gap <time> <duration>\` · \`remove-marker <markerId>\` · \`get-asset-segments <assetId>\` · \`set-playhead <time>\` · \`select-clip <clipId|none>\`
+
+API bridge only (no editorctl): undo, redo, embed-assets — POST to http://localhost:51847 with \`{"command":"undo"}\`
 `
 }
 
@@ -227,8 +286,22 @@ npx remotion render remotion/src/index.ts <CompositionId> out.mp4 --props '{"key
 editorctl import /absolute/path/to/out.mp4
 \`\`\`
 
-MCP tools (auto-import included): \`video_editor_list_remotion_compositions\`, \`video_editor_render_remotion\`, \`video_editor_render_remotion_still\`
+MCP tools (auto-import): \`video_editor_list_remotion_compositions\`, \`video_editor_render_remotion\`, \`video_editor_render_remotion_still\`
 
-Built-in IDs: \`TitleCard\`, \`Slideshow\`, \`VideoWithTitle\`, \`AudioVisualizer\`, \`LowerThird\`, \`AnimatedCaptions\`, \`KineticText\`
+Built-in IDs: \`TitleCard\` · \`Slideshow\` · \`VideoWithTitle\` · \`AudioVisualizer\` · \`LowerThird\` · \`AnimatedCaptions\` · \`KineticText\`
+
+## Full editorctl capabilities
+
+Clips: \`add-clip\` · \`move-clip\` · \`trim-clip\` · \`split-clip\` · \`duplicate-clip\` · \`rename-clip\` · \`remove-clip\` · \`ripple-delete-clip\` · \`ripple-insert-gap <time> <duration>\`
+
+Effects: \`add-effect <clipId> <type> [key=value...]\` — types: \`fade_in\` \`fade_out\` \`color_grade\` \`blur\` \`sharpen\` \`transform\` \`opacity\` \`blend_mode\` \`text_overlay\` \`speed_ramp\` \`drop_shadow\` \`glow\` \`chroma_key\`
+
+Properties: \`set-speed <clipId> <0.1–10>\` · \`set-volume <clipId> <0–2>\` · \`set-transition <clipId> <in|out> <crossfade|dip_to_black|wipe|slide|null> [dur]\` · \`set-effect-keyframes <clipId> <effectId> <json>\`
+
+Search & AI: \`search-segments\` · \`batch-selects "<query>" [limit] [padding]\` · \`batch-markers "<query>" [limit]\` · \`transcribe\` · \`generate-image\` · \`edit-image\`
+
+Misc: \`activate-sequence\` · \`set-sequence-size\` · \`add-marker\` · \`remove-marker\` · \`generate-captions\` · \`get-asset-segments\` · \`extract-frames\` · \`contact-sheet\` · \`set-playhead\` · \`select-clip\` · \`export\`
+
+API bridge only: undo · redo · embed-assets — POST \`{"command":"undo"}\` to http://localhost:51847
 `
 }
