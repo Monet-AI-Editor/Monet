@@ -1,7 +1,7 @@
 {
   "name": "monet",
   "productName": "Monet",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "author": "Het Patel",
   "description": "Electron video editor with terminal-first controls, transcription, embeddings, and export",
   "build": {
@@ -47,7 +47,9 @@
     "setup:local-transcription": "node scripts/setup-local-transcription.mjs",
     "typecheck": "tsc --noEmit",
     "build:cli": "tsc src/cli/editorctl.ts --outDir out/cli --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck",
-    "build:mcp": "tsc src/mcp-server/index.ts --outDir out/mcp-server --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck"
+    "build:mcp": "tsc src/mcp-server/index.ts --outDir out/mcp-server --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck",
+    "remotion:studio": "remotion studio remotion/src/index.ts",
+    "remotion:render": "remotion render remotion/src/index.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.69",
@@ -58,8 +60,13 @@
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@remotion/cli": "^4.0.451",
+    "@remotion/media-utils": "^4.0.451",
+    "@remotion/player": "^4.0.451",
+    "@remotion/renderer": "^4.0.451",
     "@sentry/electron": "^7.11.0",
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-progress": "^0.2.0",
     "@xterm/xterm": "^6.0.0",
     "ai": "^6.0.158",
     "clsx": "^2.1.1",
@@ -72,6 +79,7 @@
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "remotion": "^4.0.451",
     "zod": "^4.3.6"
   },
   "devDependencies": {

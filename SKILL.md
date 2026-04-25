@@ -108,6 +108,39 @@ call("help")   # → full command list
 
 ---
 
+## Remotion — React Video Composition
+
+Use Remotion to generate animated video assets (title cards, lower thirds, slideshows, motion graphics) and import them directly into the timeline.
+
+### MCP tools
+| Tool | Args | Returns |
+|------|------|---------|
+| `video_editor_list_remotion_compositions` | — | List of composition IDs |
+| `video_editor_render_remotion` | `compositionId, outputFilename?, props?, durationInFrames?, fps?` | `{outputPath, assetId}` |
+
+### CLI
+```bash
+npm run remotion:studio                                          # live preview at localhost:3000
+npx remotion render remotion/src/index.ts <ID> out.mp4 --props '{"key":"value"}'
+```
+
+### Built-in compositions
+| ID | Props |
+|----|-------|
+| `TitleCard` | `title` (str), `subtitle?` (str), `backgroundColor`, `textColor`, `accentColor` — 150 frames @ 30fps |
+| `Slideshow` | `images` (abs path[]), `frameDuration` (frames), `transitionDuration` (frames) — 300 frames @ 30fps |
+
+### Adding a composition
+1. Create `remotion/src/compositions/MyComp.tsx` — export `myCompSchema` (zod) + `MyComp` component
+2. Register in `remotion/src/Root.tsx` with `<Composition id="MyComp" ... />`
+3. Renders go to `remotion-renders/` and are auto-imported when using the MCP tool
+
+### Timing
+- Duration is in **frames** (`durationInFrames`). Default fps = 30. 30 frames = 1 second.
+- Use `useCurrentFrame()` + `spring()` + `interpolate()` for animation.
+
+---
+
 ## Example — Minimal Edit
 
 ```python

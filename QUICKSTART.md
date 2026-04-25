@@ -77,6 +77,36 @@ editorctl trim-clip clip_001_a 1.0
 # The app will render with all effects applied
 ```
 
+## Remotion — React Video Composition
+
+Remotion is installed for creating animated videos with React (title cards, lower thirds, slideshows, custom graphics).
+
+```bash
+# Preview compositions live in the browser
+npm run remotion:studio
+
+# Render from the command line
+npx remotion render remotion/src/index.ts TitleCard out.mp4 --props '{"title":"Hello"}'
+```
+
+**Or use the MCP tools (auto-imports the render into the project):**
+```
+video_editor_list_remotion_compositions   → see available compositions
+video_editor_render_remotion              → render + auto-import as asset
+  { compositionId: "TitleCard", props: { title: "Ep 1", subtitle: "Intro" } }
+```
+
+**Built-in compositions:**
+| ID | What it does | Key props |
+|----|-------------|-----------|
+| `TitleCard` | Animated spring-entrance title | `title`, `subtitle`, `backgroundColor`, `textColor`, `accentColor` |
+| `Slideshow` | Crossfade image slideshow | `images` (absolute paths[]), `frameDuration`, `transitionDuration` |
+
+Add new compositions in `remotion/src/compositions/` and register them in `remotion/src/Root.tsx`.  
+Rendered files land in `remotion-renders/` as MP4 and are automatically available as project assets.
+
+---
+
 ## What You Can Do Now
 
 **As a professional video editor, you can:**
@@ -86,6 +116,7 @@ editorctl trim-clip clip_001_a 1.0
 - Transcribe spoken content with Whisper
 - Search by semantic meaning or spoken words
 - Export final videos with FFmpeg
+- **Create animated compositions with Remotion (React)**
 
 **All operations are deterministic, auditable, and scriptable.**
 

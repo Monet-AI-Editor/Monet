@@ -91,6 +91,27 @@ Because I'm running inside the app's terminal with PTY access:
 - I can **test changes instantly** (make changes, rebuild, verify)
 - I have **full environment access** (FFmpeg, Node.js, file system)
 
+## Remotion — React Video Composition
+
+Remotion is installed for creating animated videos programmatically with React.
+
+```bash
+npm run remotion:studio          # Open Remotion Studio (live preview at localhost:3000)
+npm run remotion:render          # Render from CLI
+```
+
+**MCP tools:**
+- `video_editor_list_remotion_compositions` — list available compositions
+- `video_editor_render_remotion` — render a composition and auto-import as asset
+
+**Built-in compositions:**
+- `TitleCard` — animated title card with spring entrance
+- `Slideshow` — crossfade image slideshow
+
+**Workflow:** edit `remotion/src/compositions/`, register in `remotion/src/Root.tsx`, render via MCP → auto-imported as Monet asset.
+
+See `CLAUDE.md` for full Remotion reference.
+
 ## What Makes This Different
 
 **Traditional Video Editors**: Limited scripting, closed APIs, brittle automation

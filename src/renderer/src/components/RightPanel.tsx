@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { TerminalSquare } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { ProgressAddon, type IProgressState } from '@xterm/addon-progress'
 import type { AISettings } from '../types'
 
 export function TerminalPanel({
@@ -22,6 +23,7 @@ export function TerminalPanel({
   const [cwd, setCwd] = useState('')
   const [agentStatus, setAgentStatus] = useState<{ codexInstalled: boolean; claudeInstalled: boolean } | null>(null)
   const [showGuide, setShowGuide] = useState(false)
+  const [progress, setProgress] = useState<IProgressState | null>(null)
 
   useEffect(() => {
     onGuideToggle?.(showGuide)
@@ -31,6 +33,7 @@ export function TerminalPanel({
     if (!hostRef.current) return
 
     const terminal = new Terminal({
+      allowProposedApi: true,
       cursorBlink: true,
       cursorStyle: 'bar',
       fontFamily: 'Menlo, Monaco, SFMono-Regular, SF Mono, Consolas, monospace',
@@ -72,8 +75,14 @@ export function TerminalPanel({
       fastScrollSensitivity: 5
     })
     const fitAddon = new FitAddon()
+    const progressAddon = new ProgressAddon()
     terminal.loadAddon(fitAddon)
+    terminal.loadAddon(progressAddon)
     terminal.open(hostRef.current)
+
+    progressAddon.onChange((state) => {
+      setProgress(state.state === 0 ? null : state)
+    })
 
     const applyResize = () => {
       if (!hostRef.current) return
@@ -166,6 +175,7 @@ export function TerminalPanel({
       if (resizeFrameRef.current != null) {
         window.cancelAnimationFrame(resizeFrameRef.current)
       }
+      progressAddon.dispose()
       terminal.dispose()
     }
   }, [])
@@ -201,6 +211,18 @@ export function TerminalPanel({
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface-1">
+      {progress && (
+        <div className="h-0.5 w-full bg-border">
+          {progress.state === 3 ? (
+            <div className="h-full w-1/3 animate-pulse bg-accent" />
+          ) : (
+            <div
+              className={`h-full transition-all duration-300 ${progress.state === 2 ? 'bg-red-500' : progress.state === 4 ? 'bg-yellow-500' : 'bg-accent'}`}
+              style={{ width: `${progress.value}%` }}
+            />
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
         <div className="min-w-0 flex items-center gap-2">
           <TerminalSquare size={13} className="text-accent flex-shrink-0" />

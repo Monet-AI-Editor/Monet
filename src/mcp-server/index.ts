@@ -2,8 +2,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { readFileSync, writeFileSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
+import { execSync } from 'child_process'
 import type { EditorProjectRecord, TimelineClipRecord, Effect } from '../shared/editor.js'
 
 const PROJECT_FILE = process.env.AI_VIDEO_EDITOR_PROJECT || join(process.cwd(), 'project.aiveproj.json')
@@ -453,6 +454,44 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: 'object',
           properties: {},
           required: []
+        }
+      },
+      {
+        name: 'video_editor_list_remotion_compositions',
+        description: 'List available Remotion compositions that can be rendered',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: 'video_editor_render_remotion',
+        description: 'Render a Remotion composition to a video file and auto-import it as a project asset',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            compositionId: { type: 'string', description: 'Composition ID (e.g. TitleCard, Slideshow)' },
+            outputFilename: { type: 'string', description: 'Output filename without extension (default: compositionId-timestamp)' },
+            props: { type: 'object', description: 'Props to pass to the composition (overrides defaultProps)' },
+            durationInFrames: { type: 'number', description: 'Override composition duration in frames' },
+            fps: { type: 'number', description: 'Override frames per second (default: 30)' }
+          },
+          required: ['compositionId']
+        }
+      },
+      {
+        name: 'video_editor_render_remotion_still',
+        description: 'Render a single frame from a Remotion composition as a PNG and auto-import it as a project asset',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            compositionId: { type: 'string', description: 'Composition ID' },
+            frame: { type: 'number', description: 'Frame number to render (default: 0)' },
+            outputFilename: { type: 'string', description: 'Output filename without extension' },
+            props: { type: 'object', description: 'Props to pass to the composition' }
+          },
+          required: ['compositionId']
         }
       }
     ]
@@ -1020,6 +1059,88 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: JSON.stringify(project, null, 2)
             }
           ]
+        }
+      }
+
+      case 'video_editor_list_remotion_compositions': {
+        const rootPath = join(process.cwd(), 'remotion', 'src', 'Root.tsx')
+        let rootSrc = ''
+        try { rootSrc = readFileSync(rootPath, 'utf8') } catch { /* file missing */ }
+        const ids = [...rootSrc.matchAll(/id="([^"]+)"/g)].map((m) => m[1])
+        return {
+          content: [{
+            type: 'text',
+            text: ids.length
+              ? `Available compositions:\n${ids.map((id) => `  - ${id}`).join('\n')}\n\nRender with: video_editor_render_remotion { compositionId: "..." }`
+              : 'No compositions found. Check remotion/src/Root.tsx'
+          }]
+        }
+      }
+
+      case 'video_editor_render_remotion': {
+        const { compositionId, outputFilename, props, durationInFrames, fps } = args as {
+          compositionId: string
+          outputFilename?: string
+          props?: Record<string, unknown>
+          durationInFrames?: number
+          fps?: number
+        }
+
+        const rendersDir = join(process.cwd(), 'remotion-renders')
+        mkdirSync(rendersDir, { recursive: true })
+
+        const filename = outputFilename ?? `${compositionId}-${Date.now()}`
+        const outputPath = join(rendersDir, `${filename}.mp4`)
+        const entryPoint = join(process.cwd(), 'remotion', 'src', 'index.ts')
+        const remotionBin = join(process.cwd(), 'node_modules', '.bin', 'remotion')
+
+        const renderArgs = [remotionBin, 'render', entryPoint, compositionId, outputPath, '--overwrite']
+        if (props) renderArgs.push(`--props=${JSON.stringify(props)}`)
+        if (durationInFrames) renderArgs.push(`--frames=0-${durationInFrames - 1}`)
+        if (fps) renderArgs.push(`--fps=${fps}`)
+
+        execSync(renderArgs.join(' '), { cwd: process.cwd(), stdio: 'pipe', timeout: 300_000 })
+
+        const importResult = await callLiveApp('import_files', { paths: [outputPath] })
+        const assetId = Array.isArray(importResult) ? importResult[0]?.id : importResult?.id
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ success: true, outputPath, assetId }, null, 2)
+          }]
+        }
+      }
+
+      case 'video_editor_render_remotion_still': {
+        const { compositionId, frame = 0, outputFilename, props } = args as {
+          compositionId: string
+          frame?: number
+          outputFilename?: string
+          props?: Record<string, unknown>
+        }
+
+        const rendersDir = join(process.cwd(), 'remotion-renders')
+        mkdirSync(rendersDir, { recursive: true })
+
+        const filename = outputFilename ?? `${compositionId}-frame${frame}-${Date.now()}`
+        const outputPath = join(rendersDir, `${filename}.png`)
+        const entryPoint = join(process.cwd(), 'remotion', 'src', 'index.ts')
+        const remotionBin = join(process.cwd(), 'node_modules', '.bin', 'remotion')
+
+        const stillArgs = [remotionBin, 'still', entryPoint, compositionId, outputPath, `--frame=${frame}`, '--overwrite']
+        if (props) stillArgs.push(`--props=${JSON.stringify(props)}`)
+
+        execSync(stillArgs.join(' '), { cwd: process.cwd(), stdio: 'pipe', timeout: 120_000 })
+
+        const importResult = await callLiveApp('import_files', { paths: [outputPath] })
+        const assetId = Array.isArray(importResult) ? importResult[0]?.id : importResult?.id
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ success: true, outputPath, assetId }, null, 2)
+          }]
         }
       }
 
