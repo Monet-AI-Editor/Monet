@@ -63,6 +63,7 @@ Import media, scrub, trim, split, move, duplicate, ripple edit, generate caption
 - **Semantic search** — Search spoken content, metadata, and embedded project context
 - **Autosave and recovery** — Reopen current work, recover sessions, and manage multiple saved projects
 - **Export pipeline** — 720p, 1080p, and 4K outputs, export progress UI, and one-click `Show in Finder`
+- **React video composition** — [Remotion](https://www.remotion.dev) is built in; agents can write and render React compositions (title cards, lower thirds, kinetic text, audio visualizers) that auto-import as timeline assets
 - **Basic motion and compositing** — transforms, opacity, text overlays, chroma key, and layered export baking
 - **Privacy-aware telemetry** — Anonymous usage analytics are optional; Sentry handles crash reporting
 
@@ -279,3 +280,11 @@ If you want to help shape it:
 ## License
 
 Monet is released under the MIT License.
+
+## Built with
+
+- [xterm.js](https://xtermjs.org) — terminal emulator powering the embedded shell
+- [Remotion](https://www.remotion.dev) — React-based video composition and rendering
+- [node-pty](https://github.com/microsoft/node-pty) — pseudo-terminal backend
+- [FFmpeg](https://ffmpeg.org) — video export and processing
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — local transcription runtime
