@@ -168,20 +168,27 @@ Only use these if \`editorctl\` truly cannot do the job:
 
 ## Remotion — React video composition
 
-Remotion is installed in the Monet app directory (\`$AI_VIDEO_EDITOR_ROOT\`). Use it to create animated video assets.
+Use Remotion to create animated video assets directly in this working directory. If \`remotion/\` does not exist here yet, scaffold it yourself:
 
 \`\`\`bash
-cd "$AI_VIDEO_EDITOR_ROOT"
-npm run remotion:studio                          # preview at localhost:3000
-npx remotion render remotion/src/index.ts <ID> out.mp4 --props '{"key":"val"}'
-npx remotion still remotion/src/index.ts <ID> out.png --frame=30
+mkdir -p remotion/src/compositions
+cd remotion
+npm init -y
+npm install remotion @remotion/cli
+cd ..
 \`\`\`
 
-After rendering, import: \`editorctl import /absolute/path/to/out.mp4\`
+Then create compositions in \`remotion/src/compositions/MyComp.tsx\`, register them in \`remotion/src/Root.tsx\`, and render:
+
+\`\`\`bash
+npx remotion render remotion/src/index.ts <CompositionId> output.mp4 --props '{"key":"val"}'
+npx remotion still remotion/src/index.ts <CompositionId> output.png --frame=30
+npx remotion studio remotion/src/index.ts   # live preview at localhost:3000
+\`\`\`
+
+After rendering, import into Monet: \`editorctl import /absolute/path/to/output.mp4\`
 
 MCP tools (auto-import): \`video_editor_list_remotion_compositions\`, \`video_editor_render_remotion\`, \`video_editor_render_remotion_still\`
-
-Built-in composition IDs: \`TitleCard\` · \`Slideshow\` · \`VideoWithTitle\` · \`AudioVisualizer\` · \`LowerThird\` · \`AnimatedCaptions\` · \`KineticText\`
 
 ## Editing rules
 
@@ -208,19 +215,22 @@ Do not improvise localhost commands or endpoints when \`editorctl\` already supp
 
 ## Remotion — React video composition
 
-Remotion is installed in the Monet app directory (\`$AI_VIDEO_EDITOR_ROOT\`). Use it to generate animated video assets (title cards, lower thirds, captions, visualizers) and import them into the timeline.
+Use Remotion to create animated video assets directly in this working directory. If \`remotion/\` does not exist here yet, scaffold it:
 
 \`\`\`bash
-cd "$AI_VIDEO_EDITOR_ROOT"
-npm run remotion:studio                          # live preview at localhost:3000
-npx remotion render remotion/src/index.ts <ID> out.mp4 --props '{"key":"value"}'
-npx remotion still remotion/src/index.ts <ID> out.png --frame=30
+mkdir -p remotion/src/compositions
+cd remotion && npm init -y && npm install remotion @remotion/cli && cd ..
 \`\`\`
 
-After rendering, import the output into Monet:
+Create compositions in \`remotion/src/compositions/\`, register in \`remotion/src/Root.tsx\`, then render:
+
 \`\`\`bash
-editorctl import /absolute/path/to/output.mp4
+npx remotion render remotion/src/index.ts <CompositionId> output.mp4 --props '{"key":"value"}'
+npx remotion still remotion/src/index.ts <CompositionId> output.png --frame=30
+npx remotion studio remotion/src/index.ts   # live preview at localhost:3000
 \`\`\`
+
+After rendering, import: \`editorctl import /absolute/path/to/output.mp4\`
 
 Or use MCP tools (auto-import included):
 - \`video_editor_list_remotion_compositions\` — list available composition IDs
@@ -277,14 +287,14 @@ Do not improvise raw localhost commands when \`editorctl\` already supports the 
 
 ## Remotion — React video composition
 
-Remotion is installed in \`$AI_VIDEO_EDITOR_ROOT\`. Use it to generate animated video assets and import them into the timeline.
+Use Remotion to create animated video assets in this working directory. If \`remotion/\` doesn't exist, scaffold it:
 
 \`\`\`bash
-cd "$AI_VIDEO_EDITOR_ROOT"
-npm run remotion:studio
-npx remotion render remotion/src/index.ts <CompositionId> out.mp4 --props '{"key":"value"}'
-editorctl import /absolute/path/to/out.mp4
+mkdir -p remotion/src/compositions
+cd remotion && npm init -y && npm install remotion @remotion/cli && cd ..
 \`\`\`
+
+Render and import: \`npx remotion render remotion/src/index.ts <ID> out.mp4\` then \`editorctl import /abs/path/out.mp4\`
 
 MCP tools (auto-import): \`video_editor_list_remotion_compositions\`, \`video_editor_render_remotion\`, \`video_editor_render_remotion_still\`
 
