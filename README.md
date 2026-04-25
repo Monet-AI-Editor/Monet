@@ -14,9 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Monet-AI-Editor/Monet/releases/latest/download/Monet-macOS-arm64.dmg">
-    <img src="https://img.shields.io/badge/Download%20for-macOS-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download Monet for macOS" />
-  </a>
+  <code>curl -fsSL https://raw.githubusercontent.com/Monet-AI-Editor/Monet/main/install.sh | bash</code>
 </p>
 
 
@@ -84,39 +82,13 @@ The goal is simple: make video editing something coding agents can actually oper
 
 ### macOS app
 
-Monet is currently macOS-first.
+Monet is currently macOS-first. Install with one command — no Gatekeeper prompts:
 
-<a href="https://github.com/Monet-AI-Editor/Monet/releases/latest/download/Monet-macOS-arm64.dmg">
-  <img src="https://img.shields.io/badge/Download%20for-macOS-111111?style=for-the-badge&logo=apple&logoColor=white" alt="Download Monet for macOS" />
-</a>
+```bash
+curl -fsSL https://raw.githubusercontent.com/Monet-AI-Editor/Monet/main/install.sh | bash
+```
 
-Open the `.dmg` and drag `Monet.app` into `Applications`.
-
-### If macOS blocks Monet on first launch
-
-Because Monet is currently distributed outside the Mac App Store and is not notarized, macOS may show a warning like:
-
-- `"Monet" Not Opened`
-- `Apple could not verify "Monet" is free of malware`
-
-If that happens:
-
-1. Try to open `Monet.app` once and let macOS block it.
-2. Open `System Settings → Privacy & Security`.
-3. Scroll down to the security section.
-4. Click `Open Anyway` next to Monet.
-5. Confirm the launch.
-
-After that, macOS should allow Monet to open normally on that machine.
-
-If you prefer, you can also:
-
-1. Open `Applications`
-2. Right-click `Monet.app`
-3. Click `Open`
-4. Confirm the prompt
-
-That also creates the exception and avoids repeating the warning.
+This fetches the latest release ZIP directly (bypassing browser quarantine), installs `Monet.app` to `/Applications`, and launches it.
 
 For a local packaged build from source:
 
