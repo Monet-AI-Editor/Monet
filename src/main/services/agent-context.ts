@@ -124,6 +124,23 @@ Only use these if \`editorctl\` truly cannot do the job:
 - \`curl -s http://localhost:51847/assets\`
 - \`curl -s -X POST http://localhost:51847 -H "Content-Type: application/json" -d '{"command":"list-assets"}'\`
 
+## Remotion — React video composition
+
+Remotion is installed in the Monet app directory (\`$AI_VIDEO_EDITOR_ROOT\`). Use it to create animated video assets.
+
+\`\`\`bash
+cd "$AI_VIDEO_EDITOR_ROOT"
+npm run remotion:studio                          # preview at localhost:3000
+npx remotion render remotion/src/index.ts <ID> out.mp4 --props '{"key":"val"}'
+npx remotion still remotion/src/index.ts <ID> out.png --frame=30
+\`\`\`
+
+After rendering, import: \`editorctl import /absolute/path/to/out.mp4\`
+
+MCP tools (auto-import): \`video_editor_list_remotion_compositions\`, \`video_editor_render_remotion\`, \`video_editor_render_remotion_still\`
+
+Built-in composition IDs: \`TitleCard\` · \`Slideshow\` · \`VideoWithTitle\` · \`AudioVisualizer\` · \`LowerThird\` · \`AnimatedCaptions\` · \`KineticText\`
+
 ## Editing rules
 
 - treat unintended timeline gaps as bugs
@@ -146,6 +163,42 @@ Use Monet's live control surface first:
 If the user refers to "the app" or "the current project", inspect Monet's live editor state with \`editorctl\` before searching the surrounding filesystem.
 Do not wait for the user to explain that they are inside Monet. Default to Monet live state first.
 Do not improvise localhost commands or endpoints when \`editorctl\` already supports the task.
+
+## Remotion — React video composition
+
+Remotion is installed in the Monet app directory (\`$AI_VIDEO_EDITOR_ROOT\`). Use it to generate animated video assets (title cards, lower thirds, captions, visualizers) and import them into the timeline.
+
+\`\`\`bash
+cd "$AI_VIDEO_EDITOR_ROOT"
+npm run remotion:studio                          # live preview at localhost:3000
+npx remotion render remotion/src/index.ts <ID> out.mp4 --props '{"key":"value"}'
+npx remotion still remotion/src/index.ts <ID> out.png --frame=30
+\`\`\`
+
+After rendering, import the output into Monet:
+\`\`\`bash
+editorctl import /absolute/path/to/output.mp4
+\`\`\`
+
+Or use MCP tools (auto-import included):
+- \`video_editor_list_remotion_compositions\` — list available composition IDs
+- \`video_editor_render_remotion\` — render MP4 + auto-import as asset
+- \`video_editor_render_remotion_still\` — render PNG frame + auto-import as asset
+
+### Built-in compositions
+
+| ID | Props |
+|----|-------|
+| \`TitleCard\` | \`title\`, \`subtitle\`, \`backgroundColor\`, \`textColor\`, \`accentColor\` |
+| \`Slideshow\` | \`images\` (abs path[]), \`frameDuration\`, \`transitionDuration\` |
+| \`VideoWithTitle\` | \`videoSrc\` (abs path), \`title\`, \`subtitle\`, \`titlePosition\`, \`overlayOpacity\` |
+| \`AudioVisualizer\` | \`audioSrc\` (abs path), \`barCount\`, \`barColor\`, \`mirror\` |
+| \`LowerThird\` | \`name\`, \`title\`, \`accentColor\`, \`position\` (left/center/right) |
+| \`AnimatedCaptions\` | \`words\` [{word, startFrame, endFrame}], \`highlightColor\`, \`fontSize\` |
+| \`KineticText\` | \`text\`, \`animationStyle\` (rise/fall/scale/blur), \`staggerFrames\`, \`fontSize\` |
+
+Duration is in frames (30fps default). 30 frames = 1 second.
+Add new compositions in \`$AI_VIDEO_EDITOR_ROOT/remotion/src/compositions/\` and register in \`Root.tsx\`.
 `
 }
 
@@ -162,5 +215,20 @@ Use Monet's built-in control surface first:
 Assume this shell belongs to Monet unless the user clearly says otherwise.
 Do not default to asking the user to click Import if you can import files yourself from an absolute path.
 Do not improvise raw localhost commands when \`editorctl\` already supports the operation.
+
+## Remotion — React video composition
+
+Remotion is installed in \`$AI_VIDEO_EDITOR_ROOT\`. Use it to generate animated video assets and import them into the timeline.
+
+\`\`\`bash
+cd "$AI_VIDEO_EDITOR_ROOT"
+npm run remotion:studio
+npx remotion render remotion/src/index.ts <CompositionId> out.mp4 --props '{"key":"value"}'
+editorctl import /absolute/path/to/out.mp4
+\`\`\`
+
+MCP tools (auto-import included): \`video_editor_list_remotion_compositions\`, \`video_editor_render_remotion\`, \`video_editor_render_remotion_still\`
+
+Built-in IDs: \`TitleCard\`, \`Slideshow\`, \`VideoWithTitle\`, \`AudioVisualizer\`, \`LowerThird\`, \`AnimatedCaptions\`, \`KineticText\`
 `
 }
