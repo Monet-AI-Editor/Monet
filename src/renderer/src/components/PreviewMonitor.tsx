@@ -366,7 +366,10 @@ export function PreviewMonitor({
   const containerRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const layerVideoRefs = useRef<Record<string, HTMLVideoElement | null>>({})
+  const layerAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
   const rafRef = useRef<number | null>(null)
+  const playbackGenerationRef = useRef(0)
+  const playbackAnchorRef = useRef<{ startedAt: number; basePlayhead: number } | null>(null)
   const [muted, setMuted] = useState(false)
   const [resolvedPreviewPaths, setResolvedPreviewPaths] = useState<Record<string, { path: string; cacheKey: string }>>({})
 
@@ -420,9 +423,69 @@ export function PreviewMonitor({
         .map(({ trackIndex: _trackIndex, ...layer }) => layer),
     [assets, playheadTime, tracks]
   )
+  const activeAudioLayers = useMemo(
+    () =>
+      tracks
+        .filter((track) => track.type === 'audio')
+        .map((track, trackIndex) => {
+          const clip = track.clips.find((candidate) => isPlayheadInsideClip(candidate, playheadTime))
+          if (!clip) return null
+          const asset = assets.find((candidate) => candidate.id === clip.assetId)
+          if (!asset) return null
+          const clipLocalTime = Math.max(0, Math.min(clip.duration, playheadTime - clip.startTime))
+          return {
+            clip,
+            asset,
+            clipLocalTime,
+            videoFileTime: clip.inPoint + clipLocalTime,
+            trackIndex
+          }
+        })
+        .filter((layer): layer is ActivePreviewLayer & { trackIndex: number } => Boolean(layer))
+        .sort((left, right) => left.trackIndex - right.trackIndex)
+        .map(({ trackIndex: _trackIndex, ...layer }) => layer),
+    [assets, playheadTime, tracks]
+  )
   const timelineAsset = previewClip ? assets.find((candidate) => candidate.id === previewClip.assetId) : undefined
   const shouldPreferSelectedAsset = Boolean(selectedAsset && selectedAsset.id !== timelineAsset?.id && !playheadClip)
   const renderedVideoLayers = shouldPreferSelectedAsset ? [] : activeVideoLayers
+  const standaloneSelectedAudioLayer = useMemo<ActivePreviewLayer | null>(() => {
+    if (!shouldPreferSelectedAsset || !selectedAsset || selectedAsset.type !== 'audio') return null
+    const duration = Math.max(0, selectedAsset.duration ?? totalDuration ?? 0)
+    const clipLocalTime = Math.max(0, Math.min(duration, playheadTime))
+    return {
+      clip: {
+        id: `selected-audio-preview:${selectedAsset.id}`,
+        assetId: selectedAsset.id,
+        trackId: 'selected-audio-preview',
+        name: selectedAsset.name,
+        type: 'audio',
+        startTime: 0,
+        duration,
+        inPoint: 0,
+        color: '#eab308',
+        effects: [],
+        volume: 1
+      },
+      asset: selectedAsset,
+      clipLocalTime,
+      videoFileTime: clipLocalTime
+    }
+  }, [playheadTime, selectedAsset, shouldPreferSelectedAsset, totalDuration])
+  const renderedAudioLayers = activeAudioLayers.length > 0
+    ? activeAudioLayers
+    : standaloneSelectedAudioLayer
+      ? [standaloneSelectedAudioLayer]
+      : []
+  const activeVideoLayerKey = useMemo(
+    () => activeVideoLayers.map((layer) => layer.clip.id).join('|'),
+    [activeVideoLayers]
+  )
+  const activeAudioLayerKey = useMemo(
+    () => renderedAudioLayers.map((layer) => layer.clip.id).join('|'),
+    [renderedAudioLayers]
+  )
+  const currentPreviewClipId = previewClip?.id ?? null
   const asset = shouldPreferSelectedAsset ? selectedAsset : timelineAsset ?? selectedAsset ?? assets[0]
 
   const previewAssets = useMemo(
@@ -431,9 +494,12 @@ export function PreviewMonitor({
         ...renderedVideoLayers
           .filter((layer) => Boolean(layer.asset.path))
           .map((layer) => [layer.asset.id, layer.asset] as const),
+        ...renderedAudioLayers
+          .filter((layer) => Boolean(layer.asset.path))
+          .map((layer) => [layer.asset.id, layer.asset] as const),
         ...(asset?.path ? [[asset.id, asset] as const] : [])
       ]).values()],
-    [renderedVideoLayers, asset]
+    [renderedAudioLayers, renderedVideoLayers, asset]
   )
   const previewAssetKey = useMemo(
     () => previewAssets.map((previewAsset) => getPreviewCacheKey(previewAsset)).join('|'),
@@ -560,26 +626,23 @@ export function PreviewMonitor({
   const textOverlayFontSize = Number(resolvedTextOverlay.fontSize ?? 56)
 
   // --- Stable refs for RAF and event callbacks ---
-  const previewClipRef     = useRef(previewClip)
-  const previewClipsRef    = useRef(previewClips)
+  const activeVideoLayersRef = useRef(activeVideoLayers)
+  const renderedAudioLayersRef = useRef(renderedAudioLayers)
   const totalDurationRef   = useRef(totalDuration)
   const clipDurationRef    = useRef(clipDuration)
   const setIsPlayingRef    = useRef(setIsPlaying)
   const setPlayheadTimeRef = useRef(setPlayheadTime)
   const isPlayingRef       = useRef(isPlaying)
   const assetTypeRef       = useRef(asset?.type)
-  const videoFileTimeRef   = useRef(videoFileTime)
   const playheadTimeRef    = useRef(playheadTime)
-  const lastTimelineTickRef = useRef<number | null>(null)
-  useEffect(() => { previewClipRef.current     = previewClip     }, [previewClip])
-  useEffect(() => { previewClipsRef.current    = previewClips    }, [previewClips])
+  useEffect(() => { activeVideoLayersRef.current = activeVideoLayers }, [activeVideoLayers])
+  useEffect(() => { renderedAudioLayersRef.current = renderedAudioLayers }, [renderedAudioLayers])
   useEffect(() => { totalDurationRef.current   = totalDuration   }, [totalDuration])
   useEffect(() => { clipDurationRef.current    = clipDuration    }, [clipDuration])
   useEffect(() => { setIsPlayingRef.current    = setIsPlaying    }, [setIsPlaying])
   useEffect(() => { setPlayheadTimeRef.current = setPlayheadTime }, [setPlayheadTime])
   useEffect(() => { isPlayingRef.current       = isPlaying       }, [isPlaying])
   useEffect(() => { assetTypeRef.current       = asset?.type     }, [asset?.type])
-  useEffect(() => { videoFileTimeRef.current   = videoFileTime   }, [videoFileTime])
   useEffect(() => { playheadTimeRef.current    = playheadTime    }, [playheadTime])
 
   function restoreVideoState() {
@@ -587,7 +650,7 @@ export function PreviewMonitor({
     if (videos.length === 0 || assetTypeRef.current !== 'video') return
     const shouldResumePlayback = isPlayingRef.current
 
-    for (const layer of activeVideoLayers) {
+    for (const layer of activeVideoLayersRef.current) {
       const video = layerVideoRefs.current[layer.clip.id]
       if (!video) continue
       const desiredTime = layer.videoFileTime
@@ -611,9 +674,37 @@ export function PreviewMonitor({
     }
   }
 
+  function restoreAudioState() {
+    const shouldResumePlayback = isPlayingRef.current
+
+    for (const layer of renderedAudioLayersRef.current) {
+      const audio = layerAudioRefs.current[layer.clip.id]
+      if (!audio) continue
+      const desiredTime = layer.videoFileTime
+      const sync = () => {
+        audio.volume = Math.max(0, Math.min(1, layer.clip.volume ?? 1))
+        if (Math.abs(audio.currentTime - desiredTime) > 0.05) {
+          audio.currentTime = desiredTime
+        }
+        if (shouldResumePlayback) {
+          void audio.play().catch(() => setIsPlayingRef.current(false))
+        } else {
+          audio.pause()
+        }
+      }
+
+      audio.load()
+      if (audio.readyState >= 1) {
+        sync()
+        continue
+      }
+      audio.addEventListener('loadedmetadata', sync, { once: true })
+    }
+  }
+
   function syncVideoToTimelinePosition(force = false) {
     if (assetTypeRef.current !== 'video') return
-    for (const layer of activeVideoLayers) {
+    for (const layer of activeVideoLayersRef.current) {
       const video = layerVideoRefs.current[layer.clip.id]
       if (!video) continue
       const desiredTime = layer.videoFileTime
@@ -625,18 +716,20 @@ export function PreviewMonitor({
 
   function playFromTimelinePosition() {
     if (assetTypeRef.current !== 'video') return
+    const generation = playbackGenerationRef.current
 
-    for (const layer of activeVideoLayers) {
+    for (const layer of activeVideoLayersRef.current) {
       const video = layerVideoRefs.current[layer.clip.id]
       if (!video) continue
       const desiredTime = layer.videoFileTime
-      const delta = Math.abs(video.currentTime - desiredTime)
 
       const startPlayback = () => {
+        if (playbackGenerationRef.current !== generation || !isPlayingRef.current) return
         void video.play().catch(() => setIsPlayingRef.current(false))
       }
 
       const performSeekThenPlay = () => {
+        const delta = Math.abs(video.currentTime - desiredTime)
         if (delta <= 0.05) {
           startPlayback()
           return
@@ -665,10 +758,69 @@ export function PreviewMonitor({
     }
   }
 
+  function syncAudioToTimelinePosition(force = false) {
+    for (const layer of renderedAudioLayersRef.current) {
+      const audio = layerAudioRefs.current[layer.clip.id]
+      if (!audio) continue
+      audio.volume = Math.max(0, Math.min(1, layer.clip.volume ?? 1))
+      const desiredTime = layer.videoFileTime
+      if (force || Math.abs(audio.currentTime - desiredTime) > 0.05) {
+        audio.currentTime = desiredTime
+      }
+    }
+  }
+
+  function playAudioFromTimelinePosition() {
+    const generation = playbackGenerationRef.current
+
+    for (const layer of renderedAudioLayersRef.current) {
+      const audio = layerAudioRefs.current[layer.clip.id]
+      if (!audio) continue
+      audio.volume = Math.max(0, Math.min(1, layer.clip.volume ?? 1))
+      const desiredTime = layer.videoFileTime
+
+      const startPlayback = () => {
+        if (playbackGenerationRef.current !== generation || !isPlayingRef.current) return
+        void audio.play().catch(() => setIsPlayingRef.current(false))
+      }
+
+      const performSeekThenPlay = () => {
+        const delta = Math.abs(audio.currentTime - desiredTime)
+        if (delta <= 0.05) {
+          startPlayback()
+          return
+        }
+
+        const handleSeeked = () => {
+          audio.removeEventListener('seeked', handleSeeked)
+          startPlayback()
+        }
+
+        audio.addEventListener('seeked', handleSeeked, { once: true })
+        audio.currentTime = desiredTime
+      }
+
+      if (audio.readyState >= 1) {
+        performSeekThenPlay()
+        continue
+      }
+
+      const handleMetadata = () => {
+        audio.removeEventListener('loadedmetadata', handleMetadata)
+        performSeekThenPlay()
+      }
+      audio.addEventListener('loadedmetadata', handleMetadata, { once: true })
+      audio.load()
+    }
+  }
+
   // --- Mute sync ---
   useEffect(() => {
     for (const video of Object.values(layerVideoRefs.current)) {
       if (video) video.muted = muted
+    }
+    for (const audio of Object.values(layerAudioRefs.current)) {
+      if (audio) audio.muted = muted
     }
   }, [muted])
 
@@ -685,107 +837,84 @@ export function PreviewMonitor({
     }
   }, [activeVideoLayers])
 
+  useEffect(() => {
+    const activeClipIds = new Set(renderedAudioLayers.map((layer) => layer.clip.id))
+    for (const [clipId, audio] of Object.entries(layerAudioRefs.current)) {
+      if (activeClipIds.has(clipId)) continue
+      if (audio) {
+        audio.pause()
+        audio.currentTime = 0
+      }
+      delete layerAudioRefs.current[clipId]
+    }
+  }, [renderedAudioLayers])
+
   // --- Play / pause ---
   useEffect(() => {
     if (isPlaying) {
-      const video = layerVideoRefs.current[previewClip?.id ?? ''] ?? null
-      if (!video || asset?.type !== 'video') return
-      playFromTimelinePosition()
+      playbackGenerationRef.current += 1
+      playbackAnchorRef.current = { startedAt: performance.now(), basePlayhead: playheadTimeRef.current }
+      if (asset?.type === 'video') playFromTimelinePosition()
+      if (renderedAudioLayers.length > 0) playAudioFromTimelinePosition()
     } else {
+      playbackGenerationRef.current += 1
+      playbackAnchorRef.current = null
       for (const video of Object.values(layerVideoRefs.current)) {
         video?.pause()
       }
+      for (const audio of Object.values(layerAudioRefs.current)) {
+        audio?.pause()
+      }
     }
-  }, [asset?.type, assetUrl, isPlaying, videoFileTime, setIsPlaying])
+  }, [asset?.type, assetUrl, isPlaying, activeVideoLayerKey, activeAudioLayerKey, setIsPlaying])
 
   // --- Seek on scrub / initial position ---
   useEffect(() => {
-    const video = layerVideoRefs.current[previewClip?.id ?? ''] ?? null
-    if (!video || asset?.type !== 'video') return
-    const desired = videoFileTime
-    const doSeek = () => {
-      const delta = Math.abs(video.currentTime - desired)
-      if (!isPlaying || delta > 0.2)
-        video.currentTime = desired
-    }
-    if (video.readyState >= 1) {
-      doSeek()
-    } else {
-      video.addEventListener('loadedmetadata', doSeek, { once: true })
-      return () => video.removeEventListener('loadedmetadata', doSeek)
-    }
-  }, [asset?.type, assetUrl, isPlaying, videoFileTime])
+    if (isPlaying) return
 
-  // --- RAF loop: sync playhead for both source-video transport and still/audio timelines ---
+    const video = layerVideoRefs.current[previewClip?.id ?? ''] ?? null
+    if (video && asset?.type === 'video') {
+      const desired = videoFileTime
+      const doSeek = () => {
+        const delta = Math.abs(video.currentTime - desired)
+        if (!isPlaying || delta > 0.2)
+          video.currentTime = desired
+      }
+      if (video.readyState >= 1) {
+        doSeek()
+      } else {
+        video.addEventListener('loadedmetadata', doSeek, { once: true })
+        return () => video.removeEventListener('loadedmetadata', doSeek)
+      }
+    }
+    syncAudioToTimelinePosition()
+  }, [asset?.type, assetUrl, isPlaying, renderedAudioLayers, videoFileTime])
+
+  // --- RAF loop: playhead is the master clock; media elements follow it ---
   useEffect(() => {
     if (!isPlaying) return
-
-    lastTimelineTickRef.current = null
 
     function tick() {
       const totalDur = totalDurationRef.current
       const clipDur = clipDurationRef.current
-      const activeType = assetTypeRef.current
-      const video = layerVideoRefs.current[previewClipRef.current?.id ?? ''] ?? null
+      const anchor = playbackAnchorRef.current
+      if (!anchor) return
 
-      if (activeType === 'video' && video) {
-        const current = video.currentTime
-        const clip = previewClipRef.current
+      const elapsedSeconds = Math.max(0, (performance.now() - anchor.startedAt) / 1000)
+      const nextPlayhead = Math.max(0, Math.min(totalDur || clipDur, anchor.basePlayhead + elapsedSeconds))
+      playheadTimeRef.current = nextPlayhead
+      setPlayheadTimeRef.current(nextPlayhead)
 
-        if (clip) {
-          const fileEnd = clip.inPoint + clip.duration
-          if (current >= fileEnd - 0.04) {
-            const clipEnd = clip.startTime + clip.duration
-            const nextClip = previewClipsRef.current.find((candidate) => candidate.startTime > clip.startTime + 0.001)
-            const contiguousNextClip =
-              nextClip && Math.abs(nextClip.startTime - clipEnd) <= 0.05 ? nextClip : null
-
-            if (contiguousNextClip) {
-              previewClipRef.current = contiguousNextClip
-              clipDurationRef.current = contiguousNextClip.duration
-              playheadTimeRef.current = contiguousNextClip.startTime
-              setPlayheadTimeRef.current(contiguousNextClip.startTime)
-              rafRef.current = window.requestAnimationFrame(tick)
-              return
-            }
-
-            video.pause()
-            setIsPlayingRef.current(false)
-            playheadTimeRef.current = Math.min(totalDur || clipDur, clipEnd)
-            setPlayheadTimeRef.current(Math.min(totalDur || clipDur, clipEnd))
-            return
-          }
-          const nextPlayhead = clip.startTime + (current - clip.inPoint)
-          const capped = Math.max(0, Math.min(totalDur || clipDur, nextPlayhead))
-          playheadTimeRef.current = capped
-          setPlayheadTimeRef.current(capped)
-          if (capped >= (totalDur || clipDur) - 0.04) {
-            video.pause()
-            setIsPlayingRef.current(false)
-            return
-          }
-        } else {
-          const capped = Math.max(0, Math.min(totalDur || clipDur, current))
-          playheadTimeRef.current = capped
-          setPlayheadTimeRef.current(capped)
-          if (capped >= (totalDur || clipDur) - 0.04) {
-            video.pause()
-            setIsPlayingRef.current(false)
-            return
-          }
+      if (nextPlayhead >= (totalDur || clipDur) - 0.001) {
+        playbackAnchorRef.current = null
+        for (const video of Object.values(layerVideoRefs.current)) {
+          video?.pause()
         }
-      } else {
-        const now = performance.now()
-        const previousTick = lastTimelineTickRef.current ?? now
-        lastTimelineTickRef.current = now
-        const elapsedSeconds = Math.max(0, (now - previousTick) / 1000)
-        const nextPlayhead = Math.max(0, Math.min(totalDur || clipDur, playheadTimeRef.current + elapsedSeconds))
-        playheadTimeRef.current = nextPlayhead
-        setPlayheadTimeRef.current(nextPlayhead)
-        if (nextPlayhead >= (totalDur || clipDur) - 0.001) {
-          setIsPlayingRef.current(false)
-          return
+        for (const audio of Object.values(layerAudioRefs.current)) {
+          audio?.pause()
         }
+        setIsPlayingRef.current(false)
+        return
       }
 
       rafRef.current = window.requestAnimationFrame(tick)
@@ -802,20 +931,31 @@ export function PreviewMonitor({
     for (const video of Object.values(layerVideoRefs.current)) {
       video?.pause()
     }
+    for (const audio of Object.values(layerAudioRefs.current)) {
+      audio?.pause()
+    }
     layerVideoRefs.current = {}
+    layerAudioRefs.current = {}
   }, [])
 
   useEffect(() => {
-    if (!isPlaying) {
-      lastTimelineTickRef.current = null
-    }
-  }, [isPlaying])
+    if (!isPlaying) return
+    syncVideoToTimelinePosition()
+    syncAudioToTimelinePosition()
+  }, [isPlaying, currentPreviewClipId, activeVideoLayerKey, activeAudioLayerKey])
+
+  useEffect(() => {
+    if (!isPlaying) return
+    if (asset?.type === 'video') playFromTimelinePosition()
+    if (renderedAudioLayers.length > 0) playAudioFromTimelinePosition()
+  }, [asset?.type, isPlaying, activeVideoLayerKey, activeAudioLayerKey])
 
   useEffect(() => {
     if (asset?.type !== 'video') return
 
     const handleAppResume = () => {
       restoreVideoState()
+      restoreAudioState()
     }
     const handleVisibilityChange = () => {
       if (!document.hidden) restoreVideoState()
@@ -835,7 +975,7 @@ export function PreviewMonitor({
       window.removeEventListener('focus', handleWindowFocus)
       window.removeEventListener('pageshow', handleWindowFocus)
     }
-  }, [asset?.type, assetUrl])
+  }, [asset?.type, assetUrl, renderedAudioLayers])
 
   // --- Scrub ---
   function handleScrub(ratio: number): void {
@@ -879,16 +1019,14 @@ export function PreviewMonitor({
                 const layerAssetUrl = resolvedPreviewPaths[layerPreviewKey]
                   ? `${window.api.toFileUrl(resolvedPreviewPaths[layerPreviewKey].path)}&v=${encodeURIComponent(resolvedPreviewPaths[layerPreviewKey].cacheKey)}`
                   : null
-                const primaryAudioClipId = previewClip?.id ?? renderedVideoLayers[0]?.clip.id ?? null
-                const audioMuted = layer.clip.id !== primaryAudioClipId
 
                 return layerAssetUrl || layer.asset.type === 'image' ? (
                   <PreviewLayer
                     key={layer.clip.id}
                     layer={layer}
                     assetUrl={layerAssetUrl}
-                    muted={muted}
-                    audioMuted={audioMuted}
+                    muted={muted || renderedAudioLayers.length > 0}
+                    audioMuted={true}
                     canvasWidth={canvasWidth}
                     canvasHeight={canvasHeight}
                     onTogglePlay={() => setIsPlaying(!isPlaying)}
@@ -928,6 +1066,27 @@ export function PreviewMonitor({
                 </div>
               </div>
             )}
+            {renderedAudioLayers.map((layer) => {
+              const layerPreviewKey = getPreviewCacheKey(layer.asset)
+              const layerAssetUrl = resolvedPreviewPaths[layerPreviewKey]
+                ? `${window.api.toFileUrl(resolvedPreviewPaths[layerPreviewKey].path)}&v=${encodeURIComponent(resolvedPreviewPaths[layerPreviewKey].cacheKey)}`
+                : null
+
+              if (!layerAssetUrl) return null
+
+              return (
+                <audio
+                  key={layer.clip.id}
+                  ref={(node) => {
+                    layerAudioRefs.current[layer.clip.id] = node
+                  }}
+                  src={layerAssetUrl}
+                  muted={muted}
+                  preload="auto"
+                  className="hidden"
+                />
+              )
+            })}
           </div>
         </div>
 

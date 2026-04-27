@@ -114,6 +114,14 @@ declare global {
       }) => void) => () => void
       onExportProgress: (listener: (progress: ExportProgressState) => void) => () => void
       toFileUrl: (filePath: string) => string
+      saveCanvasState: (artboards: unknown[]) => Promise<{ ok: boolean }>
+      recoverLegacyCanvasState: () => Promise<{ ok: boolean; artboards?: unknown[] }>
+      exportCanvasState: (artboards: unknown[]) => Promise<{ ok: boolean; filePath?: string; canceled?: boolean; error?: string }>
+      importCanvasState: () => Promise<{ ok: boolean; artboards?: unknown[]; filePath?: string; canceled?: boolean; error?: string }>
+      setActiveView: (view: 'editor' | 'canvas') => Promise<{ ok: boolean }>
+      onCanvasCommand: (listener: (payload: { command: string; args: Record<string, unknown> }) => void) => () => void
+      saveFrameAsMedia: (dataUrl: string, name: string) => Promise<{ ok: boolean; assetId?: string }>
+      drainCanvasQueue: () => Promise<Array<{ id: string; command: string; args: Record<string, unknown> }>>
     }
   }
 }

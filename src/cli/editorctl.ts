@@ -2,10 +2,14 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { request as httpRequest } from 'http'
 import { dirname, join } from 'path'
+import { tmpdir } from 'os'
+
+const PORT_FILE = join(tmpdir(), 'monet-api-port')
+const BASE_PORT = 51847
+const MAX_PORT = 51857
 import type { EditorProjectRecord, TimelineClipRecord, Effect } from '../shared/editor.js'
 
 const PROJECT_FILE = resolveProjectFile()
-const API_PORT = 51847
 const API_HOST_CANDIDATES = ['localhost', '127.0.0.1']
 
 function resolveProjectFile(): string {
@@ -35,12 +39,12 @@ function resolveProjectFile(): string {
   return preferred
 }
 
-async function probeLiveAppHost(host: string): Promise<boolean> {
+async function probeLiveAppOnPort(host: string, port: number): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
     const request = httpRequest(
       {
         host,
-        port: API_PORT,
+        port,
         path: '/help',
         method: 'GET',
         timeout: 900
@@ -73,10 +77,21 @@ async function probeLiveAppHost(host: string): Promise<boolean> {
   })
 }
 
-async function resolveLiveAppHost(): Promise<string | null> {
-  for (const host of API_HOST_CANDIDATES) {
-    if (await probeLiveAppHost(host)) {
-      return host
+async function resolveLiveAppHost(): Promise<{ host: string; port: number } | null> {
+  // Try the port written by the app first (fastest — avoids scanning)
+  try {
+    const savedPort = parseInt(readFileSync(PORT_FILE, 'utf8').trim(), 10)
+    if (savedPort >= BASE_PORT && savedPort <= MAX_PORT) {
+      for (const host of API_HOST_CANDIDATES) {
+        if (await probeLiveAppOnPort(host, savedPort)) return { host, port: savedPort }
+      }
+    }
+  } catch { /* port file doesn't exist yet */ }
+
+  // Scan the port range to find whichever Monet instance is ours
+  for (let port = BASE_PORT; port <= MAX_PORT; port++) {
+    for (const host of API_HOST_CANDIDATES) {
+      if (await probeLiveAppOnPort(host, port)) return { host, port }
     }
   }
   return null
@@ -87,12 +102,12 @@ async function checkLiveApp(): Promise<boolean> {
 }
 
 async function callLiveApp(command: string, args: any = {}): Promise<any> {
-  const host = await resolveLiveAppHost()
-  if (!host) {
+  const endpoint = await resolveLiveAppHost()
+  if (!endpoint) {
     throw new Error('Monet live app is not reachable')
   }
 
-  const response = await fetch(`http://${host}:${API_PORT}`, {
+  const response = await fetch(`http://${endpoint.host}:${endpoint.port}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ command, args })
@@ -242,6 +257,31 @@ COMMANDS:
   export <outputPath> [quality] [resolution] [format]
                           Export active sequence (quality: draft|standard|high, resolution: 720p|1080p|4k, format: mp4|mov)
 
+CANVAS COMMANDS (Monet Canvas tab — requires live app):
+  canvas-frames            List all canvas artboard frames
+  canvas-add-frame <name> <width> <height> [mode]
+                          Add a new frame (mode: html|paperjs|matterjs, default: html)
+  canvas-run-paperjs <frameId> <script>
+                          Set Paper.js script on a frame. Full Paper.js API available.
+                          Variables in scope: frame, fps, width, height
+                          API: Path, Shape, Group, PointText, Raster, Color, Gradient,
+                               view, project, layer — all Paper.js globals
+  canvas-run-matterjs <frameId> <script>
+                          Set Matter.js physics scene on a frame.
+                          Pre-destructured: Engine, Render, Runner, Bodies, Body,
+                          Composite, World, Constraint, Events, Mouse, MouseConstraint
+                          Variables: width, height, engine, render
+  canvas-update-frame <frameId> [name=<name>] [width=<w>] [height=<h>]
+                          Update frame metadata
+  canvas-delete-frame <frameId>
+                          Delete a canvas frame
+  canvas-clear            Remove all canvas frames
+  canvas-set-zoom <zoom>  Set canvas zoom (e.g. 0.5, 1.0, 2.0)
+  canvas-export <path>    Export entire canvas to a JSON file (state backup)
+  canvas-import <path>    Import frames from a JSON file (adds to current canvas, doesn't replace)
+  canvas-render-png <frameId> <outputPath.png>
+                          Render a paperjs/matterjs frame as a PNG file
+
 NOTE: Auto-detects running app and uses live connection when available.
       Falls back to file I/O if app is not running.
 
@@ -267,6 +307,11 @@ EXAMPLES:
   editorctl generate-image "Minimal black hero shot of a laptop on a white plinth" 1536x1024 high opaque png moderation=low outputCompression=90
   editorctl edit-image "Remove the background and center the product" asset_123 background=transparent format=png inputFidelity=high
   editorctl export ~/Desktop/output.mov high 4k mov
+
+  editorctl canvas-frames
+  editorctl canvas-add-frame "Physics Demo" 1280 720 matterjs
+  editorctl canvas-run-matterjs frame_123 "var ball = Bodies.circle(640, 50, 40, { restitution: 0.9 }); Composite.add(engine.world, [ball]);"
+  editorctl canvas-run-paperjs frame_456 "var c = new Path.Circle({ center: view.center, radius: 100, fillColor: '#5b82f7' });"
 `)
 }
 
@@ -298,6 +343,43 @@ async function main(): Promise<void> {
 
         case 'get-state': {
           const state = await callLiveApp('get_control_state')
+          // activeView may be missing from old app builds — read temp file as source of truth
+          if (!(state as any).activeView) {
+            try {
+              const tmpPath = join(tmpdir(), 'monet-active-view')
+              ;(state as any).activeView = readFileSync(tmpPath, 'utf8').trim() || 'editor'
+            } catch {
+              ;(state as any).activeView = 'editor'
+            }
+          }
+          if ((state as any).activeView === 'canvas') {
+            console.error(`
+╔══════════════════════════════════════════════════════════════════════╗
+║  ⚠️  CANVAS MODE ACTIVE                                              ║
+║                                                                      ║
+║  The user is looking at the Monet Canvas drawing board, NOT the      ║
+║  video editor timeline.                                              ║
+║                                                                      ║
+║  DO:   editorctl canvas-loading "…"                                  ║
+║        editorctl canvas-add-frame <name> <w> <h> paperjs|matterjs    ║
+║        editorctl canvas-run-paperjs <id> "<script>"                  ║
+║        editorctl canvas-done                                         ║
+║                                                                      ║
+║  OPTION A — Draw in canvas (Paper.js / Matter.js / HTML):            ║
+║    editorctl canvas-loading "…"                                      ║
+║    editorctl canvas-add-frame <name> <w> <h> paperjs|matterjs|html  ║
+║    editorctl canvas-run-paperjs <id> "<script>"                      ║
+║    editorctl canvas-done                                             ║
+║                                                                      ║
+║  OPTION B — Generate image (GPT image → canvas + media library):     ║
+║    editorctl generate-image "<prompt>" [size] [quality]              ║
+║    editorctl canvas-add-image "<absolute/path/to/output.png>"        ║
+║                                                                      ║
+║  ASK the user which they want before doing anything.                 ║
+║  DO NOT use: npx remotion render  •  editorctl import (use above)   ║
+╚══════════════════════════════════════════════════════════════════════╝
+`)
+          }
           console.log(JSON.stringify(state, null, 2))
           return
         }
@@ -810,6 +892,168 @@ async function main(): Promise<void> {
 
           const result = await callLiveApp('export_sequence', { outputPath, quality, resolution, format })
           console.log(`Exported ${result.sequenceName} to ${result.outputPath}`)
+          return
+        }
+
+        // ── Canvas commands ──────────────────────────────────────────────
+        case 'canvas-frames': {
+          const result = await callLiveApp('canvas-get-state', {})
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'canvas-add-frame': {
+          const [, name, widthStr, heightStr, mode = 'html'] = args
+          if (!name || !widthStr || !heightStr) {
+            console.error('Usage: editorctl canvas-add-frame <name> <width> <height> [mode=html|paperjs|matterjs]')
+            process.exit(1)
+          }
+          await callLiveApp('canvas-add-frame', {
+            name,
+            width: parseInt(widthStr, 10),
+            height: parseInt(heightStr, 10),
+            mode
+          })
+          console.log(`Added ${mode} frame: ${name}`)
+          return
+        }
+
+        case 'canvas-run-paperjs': {
+          const [, frameId, ...scriptParts] = args
+          const script = scriptParts.join(' ')
+          if (!frameId || !script) {
+            console.error('Usage: editorctl canvas-run-paperjs <frameId> <script>')
+            console.error('  Script has access to: Path, Shape, Group, PointText, Color, Gradient, view, project, layer')
+            console.error('  Example: editorctl canvas-run-paperjs frame_123 "new Path.Circle({ center: view.center, radius: 80, fillColor: \'#5b82f7\' });"')
+            process.exit(1)
+          }
+          await callLiveApp('canvas-update-frame', { id: frameId, mode: 'paperjs', script })
+          console.log(`Paper.js script applied to frame ${frameId}`)
+          return
+        }
+
+        case 'canvas-run-matterjs': {
+          const [, frameId, ...scriptParts] = args
+          const script = scriptParts.join(' ')
+          if (!frameId || !script) {
+            console.error('Usage: editorctl canvas-run-matterjs <frameId> <script>')
+            console.error('  Pre-available: Engine, Render, Runner, Bodies, Body, Composite, World, Constraint, Events')
+            console.error('  Variables: width, height, engine, render')
+            console.error('  Example: editorctl canvas-run-matterjs frame_123 "var b = Bodies.circle(640, 50, 40, { restitution: 0.9 }); Composite.add(engine.world, [b]);"')
+            process.exit(1)
+          }
+          await callLiveApp('canvas-update-frame', { id: frameId, mode: 'matterjs', script })
+          console.log(`Matter.js scene applied to frame ${frameId}`)
+          return
+        }
+
+        case 'canvas-update-frame': {
+          const [, frameId, ...kvPairs] = args
+          if (!frameId) {
+            console.error('Usage: editorctl canvas-update-frame <frameId> [name=<name>] [width=<w>] [height=<h>]')
+            process.exit(1)
+          }
+          const opts = parseKeyValueOptions(kvPairs)
+          await callLiveApp('canvas-update-frame', {
+            id: frameId,
+            ...(opts.name && { name: opts.name }),
+            ...(opts.width && { width: parseInt(opts.width, 10) }),
+            ...(opts.height && { height: parseInt(opts.height, 10) })
+          })
+          console.log(`Updated frame ${frameId}`)
+          return
+        }
+
+        case 'canvas-delete-frame': {
+          const [, frameId] = args
+          if (!frameId) {
+            console.error('Usage: editorctl canvas-delete-frame <frameId>')
+            process.exit(1)
+          }
+          await callLiveApp('canvas-delete-frame', { id: frameId })
+          console.log(`Deleted frame ${frameId}`)
+          return
+        }
+
+        case 'canvas-clear': {
+          await callLiveApp('canvas-clear', {})
+          console.log('Canvas cleared')
+          return
+        }
+
+        case 'canvas-set-zoom': {
+          const [, zoomStr] = args
+          if (!zoomStr) {
+            console.error('Usage: editorctl canvas-set-zoom <zoom> (e.g. 0.5, 1.0, 2.0)')
+            process.exit(1)
+          }
+          await callLiveApp('canvas-set-zoom', { zoom: parseFloat(zoomStr) })
+          console.log(`Canvas zoom set to ${zoomStr}`)
+          return
+        }
+
+        case 'canvas-loading': {
+          const [, ...msgParts] = args
+          const message = msgParts.join(' ') || 'Working…'
+          await callLiveApp('canvas-set-loading', { message })
+          return
+        }
+
+        case 'canvas-done': {
+          await callLiveApp('canvas-clear-loading', {})
+          return
+        }
+
+        case 'canvas-add-image': {
+          const [, imagePath, widthStr, heightStr] = args
+          if (!imagePath) {
+            console.error('Usage: editorctl canvas-add-image <absoluteImagePath> [width] [height]')
+            console.error('  Adds the image as a canvas frame AND imports it to the video editor media library.')
+            process.exit(1)
+          }
+          const result = await callLiveApp('canvas-add-image', {
+            imagePath,
+            width: widthStr ? parseInt(widthStr, 10) : undefined,
+            height: heightStr ? parseInt(heightStr, 10) : undefined,
+          })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'canvas-render-png': {
+          const [, frameId, outputPath] = args
+          if (!frameId || !outputPath) {
+            console.error('Usage: editorctl canvas-render-png <frameId> <absoluteOutputPath.png>')
+            console.error('  Captures the rendered output of a paperjs/matterjs frame as a PNG file.')
+            console.error('  Get frame IDs from `editorctl canvas-frames`.')
+            process.exit(1)
+          }
+          const result = await callLiveApp('canvas-render-png', { frameId, outputPath })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'canvas-export': {
+          const [, outputPath] = args
+          if (!outputPath) {
+            console.error('Usage: editorctl canvas-export <absolutePath.json>')
+            console.error('  Exports the entire canvas (all frames) to a JSON file.')
+            process.exit(1)
+          }
+          const result = await callLiveApp('canvas-export-to-path', { path: outputPath })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'canvas-import': {
+          const [, inputPath] = args
+          if (!inputPath) {
+            console.error('Usage: editorctl canvas-import <absolutePath.json>')
+            console.error('  Imports frames from a JSON file and ADDS them to the current canvas (existing frames are preserved).')
+            process.exit(1)
+          }
+          const result = await callLiveApp('canvas-import-from-path', { path: inputPath })
+          console.log(JSON.stringify(result, null, 2))
           return
         }
       }

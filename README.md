@@ -1,12 +1,16 @@
 <h1 align="center">Monet</h1>
-<p align="center">AI video editor for coding agents</p>
+<p align="center">AI video editor and design canvas for coding agents</p>
 
 <p align="center">
   <img src="./resources/monet-mark.png" alt="Monet logo" width="120" />
 </p>
 
 <p align="center">
-  Local-first editing, terminal-native agent workflows, real timeline operations, local transcription, and export in one macOS app.
+  Local-first video editing, a live design canvas, terminal-native agent workflows, real timeline operations, local transcription, and export in one macOS app.
+</p>
+
+<p align="center">
+  <strong>Monet is no longer just an AI video editor.</strong> Use Claude Code or Codex directly inside Monet Canvas to design vector graphics, animate, simulate physics, and drop the result straight into your video timeline.
 </p>
 
 <p align="center">
@@ -55,15 +59,25 @@ Import media, scrub, trim, split, move, duplicate, ripple edit, generate caption
 <img src="./resources/timeline.png" alt="Monet timeline" width="100%" />
 </td>
 </tr>
+<tr>
+<td width="42%" valign="top">
+<h3>Monet Canvas — design alongside the editor</h3>
+A new artboard-based design surface inside Monet. Ask Claude Code or Codex to draw with <strong>Paper.js</strong>, simulate physics with <strong>Matter.js</strong>, or build any HTML/CSS/JS frame. Each rendered frame auto-imports to the video timeline media library, so designs flow straight into your edit. Figma-style click-and-drag panning, inline library bundles (no CDN), and live agent loading animations on each frame.
+</td>
+<td width="58%">
+<img src="./resources/canvas.png" alt="Monet Canvas" width="100%" />
+</td>
+</tr>
 </table>
 
 - **Terminal-first AI workflow** — Use Claude Code or Codex directly in the app instead of relying on a built-in chatbot abstraction
-- **Deterministic editing tools** — `editorctl`, local API bridge, and MCP entrypoint for inspect/edit/export operations
+- **Monet Canvas** — design surface with Paper.js + Matter.js + raw HTML modes, live agent loading per frame, auto-export to the video media library, JSON export/import for canvas state, and PNG render for individual frames
+- **Deterministic editing tools** — `editorctl`, local API bridge, and MCP entrypoint for inspect/edit/export operations across both timeline and canvas
 - **Local transcription** — Uses `faster-whisper` on-device by default, with OpenAI fallback when configured
 - **Semantic search** — Search spoken content, metadata, and embedded project context
 - **Autosave and recovery** — Reopen current work, recover sessions, and manage multiple saved projects
 - **Export pipeline** — 720p, 1080p, and 4K outputs, export progress UI, and one-click `Show in Finder`
-- **React video composition** — [Remotion](https://www.remotion.dev) is built in; agents can write and render React compositions (title cards, lower thirds, kinetic text, audio visualizers) that auto-import as timeline assets
+- **React video composition** — [Remotion](https://www.remotion.dev) is built in with `PaperCanvas` and `PhysicsScene` compositions plus title cards, lower thirds, kinetic text, audio visualizers — all auto-import as timeline assets
 - **Basic motion and compositing** — transforms, opacity, text overlays, chroma key, and layered export baking
 - **Privacy-aware telemetry** — Anonymous usage analytics are optional; Sentry handles crash reporting
 
@@ -152,7 +166,9 @@ Claude Code and Codex installation help is shown next to the terminal when neede
 
 ## What Agents Can Do
 
-Through the embedded terminal, `editorctl`, API bridge, and MCP surfaces, agents can:
+Through the embedded terminal, `editorctl`, API bridge, and MCP surfaces, agents can operate **both** the video editor and the design canvas.
+
+### Video Editor
 
 - inspect the current project and active sequence
 - list assets, tracks, clips, markers, and segments
@@ -163,15 +179,44 @@ Through the embedded terminal, `editorctl`, API bridge, and MCP surfaces, agents
 - create rough cuts and selects from search results
 - extract frames and create contact sheets
 - run transcription
+- generate images with GPT and import to media
 - export the active sequence
 
-Example:
+### Monet Canvas
+
+- create artboard frames in `html`, `paperjs`, or `matterjs` mode
+- run any Paper.js script (vector graphics, animation, generative art)
+- run any Matter.js scene (2D physics simulations)
+- inject inline HTML/CSS/JS for arbitrary web-native designs
+- update, rename, resize, or delete individual frames
+- export entire canvas state as JSON (full backup) or render any single frame as PNG
+- import JSON canvas state, adding to existing frames without overwriting
+- auto-import every rendered frame into the video editor's media library
+- show live grid loading overlays per frame as the agent works
+
+### Tool Surface
+
+| Surface | Used by | Purpose |
+| --- | --- | --- |
+| `editorctl` CLI | Claude Code, Codex, terminal scripts | Deterministic timeline + canvas commands inside the embedded terminal |
+| MCP server | MCP-aware agent hosts | Same operations exposed as Model Context Protocol tools |
+| HTTP API bridge | Anything that can `curl localhost:51847` | Fallback path; auto-discovers a free port if the default is busy |
+| `[MONET]` UserPromptSubmit hook | Claude Code | Injects current `activeView` (canvas vs editor) into the agent's context every turn |
+
+### Examples
 
 ```bash
+# Video editor
 editorctl get-state
-editorctl list-assets
 editorctl search-segments "terminal workflow"
 editorctl export /tmp/monet-export.mp4 high 1080p mp4
+
+# Canvas — draw a Spider-Verse glitch with Paper.js
+editorctl canvas-add-frame "Glitch" 1280 720 paperjs
+editorctl canvas-frames
+editorctl canvas-run-paperjs <id> "var c = new Path.Circle({ center: view.center, radius: 100, fillColor: '#7aa2f7' });"
+editorctl canvas-render-png <id> ~/Desktop/glitch.png
+editorctl canvas-export ~/Desktop/my-canvas.json
 ```
 
 ## Local AI Stack

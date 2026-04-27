@@ -3,6 +3,8 @@ export interface ControlState {
   selectedClipId: string | null
   selectedAssetId: string | null
   activeSequenceId: string | null
+  activeView: 'editor' | 'canvas'
+  canvasTerminalOpen: boolean
 }
 
 export class ControlStateService {
@@ -10,7 +12,9 @@ export class ControlStateService {
     playheadTime: 0,
     selectedClipId: null,
     selectedAssetId: null,
-    activeSequenceId: null
+    activeSequenceId: null,
+    activeView: 'editor',
+    canvasTerminalOpen: false
   }
 
   getState(): ControlState {

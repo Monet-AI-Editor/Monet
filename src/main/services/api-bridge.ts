@@ -11,18 +11,36 @@ import type { ControlStateService } from './control-state-service'
 import type { ImageGenerationService } from './image-generation-service'
 import type { MediaAssetRecord } from '../../shared/editor'
 import { searchSegments, searchSegmentsWithVectors, semanticSearch, semanticSearchWithVectors } from './semantic-index'
-import { dirname, join } from 'path'
+import { dirname, join, basename, extname } from 'path'
 import { homedir } from 'os'
+import { readFile } from 'fs/promises'
+import { existsSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+
+const PORT_FILE = join(tmpdir(), 'monet-api-port')
+const BASE_PORT = 51847
+const MAX_PORT = 51857
+
+function writePortFile(port: number): void {
+  try { writeFileSync(PORT_FILE, String(port), 'utf8') } catch { /* non-fatal */ }
+}
 
 export class APIBridge {
   private server: Server | null = null
-  private readonly PORT = 51847
+  private PORT = BASE_PORT
+  private canvasStateProvider: (() => unknown[]) | null = null
+
+  setCanvasStateProvider(fn: () => unknown[]): void {
+    this.canvasStateProvider = fn
+  }
 
   private buildStateSnapshot(): {
     playheadTime: number
     selectedClipId: string | null
     selectedAssetId: string | null
     activeSequenceId: string | null
+    activeView: 'editor' | 'canvas'
+    canvasTerminalOpen: boolean
     projectId: string
     projectName: string
     sequences: Array<{
@@ -141,7 +159,7 @@ export class APIBridge {
       })
     })
 
-    this.server.on('error', (error: NodeJS.ErrnoException) => {
+    this.server!.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'EADDRINUSE') {
         void this.recoverFromPortConflict()
         return
@@ -149,8 +167,9 @@ export class APIBridge {
       throw error
     })
 
-    this.server.listen(this.PORT, 'localhost', () => {
+    this.server!.listen(this.PORT, 'localhost', () => {
       console.log(`[API Bridge] Listening on http://localhost:${this.PORT}`)
+      writePortFile(this.PORT)
     })
   }
 
@@ -187,18 +206,24 @@ export class APIBridge {
   }
 
   private async recoverFromPortConflict(): Promise<void> {
-    if (this.server) {
-      this.server.close()
-      this.server = null
+    if (this.server) { this.server.close(); this.server = null }
+
+    // Port is in use — check if it's another Monet instance we can share
+    if (await this.isBridgeReachable()) {
+      console.warn(`[API Bridge] Port ${this.PORT} already in use by another Monet. Trying next port…`)
     }
 
-    if (await this.isBridgeReachable()) {
-      console.warn(`[API Bridge] Port ${this.PORT} already in use. Reusing existing bridge.`)
+    // Scan for a free port rather than giving up
+    const next = this.PORT + 1
+    if (next > MAX_PORT) {
+      console.error('[API Bridge] No free port found in range. API bridge disabled.')
       return
     }
 
-    console.warn(`[API Bridge] Port ${this.PORT} looked busy but no bridge responded. Retrying…`)
-    setTimeout(() => this.start(), 500)
+    this.PORT = next
+    console.warn(`[API Bridge] Trying port ${this.PORT}…`)
+    // Recreate server on new port
+    setTimeout(() => this.start(), 100)
   }
 
   private pushProjectUpdate(): void {
@@ -841,7 +866,19 @@ export class APIBridge {
         }
       }
 
-      case 'generate_image':
+      case 'generate_image': {
+        // If the user is in canvas mode, require explicit confirmation so the agent
+        // cannot skip the "draw vs. generate" question.
+        const viewState = this.controlStateService.getState()
+        if (viewState.activeView === 'canvas' && !args.canvas_confirmed) {
+          throw new Error(
+            'CANVAS MODE — You must ask the user before generating an image.\n\n' +
+            'Ask: "Do you want me to draw this on the canvas (live code, fully editable), ' +
+            'or generate it as a photo/image using GPT image generation?"\n\n' +
+            'If the user confirms image generation, call generate_image again with canvas_confirmed: true. ' +
+            'If they want it drawn, use canvas-run-paperjs or canvas-run-matterjs instead.'
+          )
+        }
         return this.generateImageAsset({
           prompt: args.prompt ? String(args.prompt) : undefined,
           size: args.size ? String(args.size) : undefined,
@@ -852,6 +889,7 @@ export class APIBridge {
           outputCompression: typeof args.outputCompression === 'number' ? args.outputCompression : undefined,
           partialImages: typeof args.partialImages === 'number' ? args.partialImages : undefined
         })
+      }
 
       case 'edit_image':
         return this.editImageAsset({
@@ -1253,6 +1291,172 @@ export class APIBridge {
         )
         this.pushProjectUpdate()
         return created
+      }
+
+      // ── Canvas ────────────────────────────────────────────────────────────
+      case 'canvas-get-state':
+      case 'canvas_get_state': {
+        const state = this.canvasStateProvider ? this.canvasStateProvider() : []
+        return { frames: state, count: (state as unknown[]).length }
+      }
+
+      case 'canvas-add-frame':
+      case 'canvas_add_frame': {
+        this.safeSendToAll('canvas:command', { command: 'add-frame', args })
+        return { ok: true }
+      }
+
+      case 'canvas-update-frame':
+      case 'canvas_update_frame': {
+        this.safeSendToAll('canvas:command', { command: 'update-frame', args })
+        return { ok: true }
+      }
+
+      case 'canvas-delete-frame':
+      case 'canvas_delete_frame': {
+        this.safeSendToAll('canvas:command', { command: 'delete-frame', args })
+        return { ok: true }
+      }
+
+      case 'canvas-select-frame':
+      case 'canvas_select_frame': {
+        this.safeSendToAll('canvas:command', { command: 'select-frame', args })
+        return { ok: true }
+      }
+
+      case 'canvas-clear':
+      case 'canvas_clear': {
+        this.safeSendToAll('canvas:command', { command: 'clear', args: {} })
+        return { ok: true }
+      }
+
+      case 'canvas-set-zoom':
+      case 'canvas_set_zoom': {
+        this.safeSendToAll('canvas:command', { command: 'set-zoom', args })
+        return { ok: true }
+      }
+
+      case 'canvas-set-loading':
+      case 'canvas_set_loading': {
+        this.safeSendToAll('canvas:command', { command: 'set-loading', args })
+        return { ok: true }
+      }
+
+      case 'canvas-clear-loading':
+      case 'canvas_clear_loading': {
+        this.safeSendToAll('canvas:command', { command: 'clear-loading', args: {} })
+        return { ok: true }
+      }
+
+      case 'canvas-render-png':
+      case 'canvas_render_png': {
+        const frameId = typeof args.frameId === 'string' ? args.frameId
+                       : typeof args.id === 'string' ? args.id
+                       : null
+        const outputPath = typeof args.outputPath === 'string' ? args.outputPath
+                          : typeof args.path === 'string' ? args.path
+                          : null
+        if (!frameId || !outputPath) throw new Error('canvas-render-png requires frameId and outputPath')
+
+        // Ask the renderer to capture the iframe's canvas
+        const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
+        if (!win) throw new Error('No window available')
+        const dataUrl: string | null = await win.webContents.executeJavaScript(`
+          (function() {
+            try {
+              var iframe = document.querySelector('iframe[data-frame-id=${JSON.stringify(frameId)}]');
+              if (!iframe || !iframe.contentDocument) return null;
+              var canvas = iframe.contentDocument.getElementById('canvas');
+              if (!canvas || typeof canvas.toDataURL !== 'function') return null;
+              return canvas.toDataURL('image/png');
+            } catch (e) { return null; }
+          })()
+        `)
+        if (!dataUrl) throw new Error(`Frame ${frameId} not found, has no canvas, or capture failed`)
+
+        const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
+        const buffer = Buffer.from(base64, 'base64')
+        const fs = require('fs/promises') as typeof import('fs/promises')
+        await fs.writeFile(outputPath, buffer)
+        return { ok: true, frameId, outputPath, bytes: buffer.length }
+      }
+
+      case 'canvas-export-to-path':
+      case 'canvas_export_to_path': {
+        const path = typeof args.path === 'string' ? args.path : null
+        if (!path) throw new Error('canvas-export-to-path requires args.path')
+        const artboards = this.canvasStateProvider ? this.canvasStateProvider() : []
+        const fs = require('fs/promises') as typeof import('fs/promises')
+        const payload = { version: 1, exportedAt: new Date().toISOString(), artboards }
+        await fs.writeFile(path, JSON.stringify(payload, null, 2), 'utf8')
+        return { ok: true, path, frameCount: Array.isArray(artboards) ? artboards.length : 0 }
+      }
+
+      case 'canvas-import-from-path':
+      case 'canvas_import_from_path': {
+        const path = typeof args.path === 'string' ? args.path : null
+        if (!path) throw new Error('canvas-import-from-path requires args.path')
+        const fs = require('fs/promises') as typeof import('fs/promises')
+        const raw = await fs.readFile(path, 'utf8')
+        const parsed = JSON.parse(raw)
+        const artboards = Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed.artboards) ? parsed.artboards : []
+        // Send each artboard as an add-frame command to the renderer.
+        // The renderer adds new IDs and positions, preserving any existing frames.
+        for (const ab of artboards) {
+          this.safeSendToAll('canvas:command', {
+            command: 'add-frame',
+            args: {
+              name: ab.name,
+              width: ab.width,
+              height: ab.height,
+              mode: ab.mode,
+              html: ab.html,
+              script: ab.script,
+            }
+          })
+        }
+        return { ok: true, frameCount: artboards.length, path }
+      }
+
+      case 'canvas-add-image':
+      case 'canvas_add_image': {
+        const imagePath = typeof args.imagePath === 'string' ? args.imagePath : null
+        if (!imagePath || !existsSync(imagePath)) {
+          throw new Error(`Image file not found: ${imagePath}`)
+        }
+
+        // 1. Read image and encode as data URL so the sandboxed iframe can display it
+        const ext = extname(imagePath).toLowerCase().replace('.', '')
+        const mime = ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png'
+        const imageData = await readFile(imagePath)
+        const dataUrl = `data:${mime};base64,${imageData.toString('base64')}`
+
+        // 2. Detect natural dimensions if possible (rough heuristic via file size)
+        const w = typeof args.width === 'number' ? args.width : 1280
+        const h = typeof args.height === 'number' ? args.height : 720
+
+        const html = `<div style="width:${w}px;height:${h}px;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden;"><img src="${dataUrl}" style="max-width:100%;max-height:100%;object-fit:contain;" /></div>`
+        const frameName = basename(imagePath, extname(imagePath))
+
+        // 3. Add canvas frame
+        this.safeSendToAll('canvas:command', {
+          command: 'add-frame',
+          args: { name: frameName, width: w, height: h, mode: 'html', html }
+        })
+
+        // 4. Also import into video editor media library
+        let asset = null
+        try {
+          const [imported] = this.projectStore.importFiles([imagePath])
+          asset = imported
+          this.pushProjectUpdate()
+        } catch {
+          // Non-fatal — canvas frame was added regardless
+        }
+
+        return { ok: true, frameName, width: w, height: h, asset }
       }
 
       // ── History ───────────────────────────────────────────────────────────

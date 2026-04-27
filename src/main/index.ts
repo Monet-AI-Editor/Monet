@@ -51,6 +51,12 @@ protocol.registerSchemesAsPrivileged([
 const APP_NAME = 'Monet'
 app.setName(APP_NAME)
 
+// Disable Chromium's autoplay block so video/audio plays without prior user gesture
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
+export let canvasStateCache: unknown[] = []
+const canvasStateCacheByProject = new Map<string, unknown[]>()
+
 let projectStore: ProjectStore
 let toolRegistry: ToolRegistry
 const transcriptionService = new TranscriptionService()
@@ -85,6 +91,95 @@ const LAUNCHER_WINDOW = {
 
 let launcherWindow: BrowserWindow | null = null
 let editorWindow: BrowserWindow | null = null
+
+function getCanvasStateProjectKey(): string {
+  const projectFilePath = projectStore?.getProjectFilePath?.() ?? null
+  if (projectFilePath) return `file:${projectFilePath}`
+  const projectName = projectStore?.getProject?.().name?.trim?.() || 'untitled'
+  return `draft:${projectName}`
+}
+
+function syncCanvasStateForActiveProject(): void {
+  const key = getCanvasStateProjectKey()
+  canvasStateCache = canvasStateCacheByProject.get(key) ?? []
+}
+
+async function recoverLegacyCanvasStateFromLevelDb(): Promise<unknown[]> {
+  const levelDbPath = join(app.getPath('userData'), 'Local Storage', 'leveldb')
+
+  type Candidate = {
+    artboards: unknown[]
+    score: number
+    mtimeMs: number
+  }
+
+  const candidates: Candidate[] = []
+
+  try {
+    const entries = await readdir(levelDbPath, { withFileTypes: true })
+    const dataFiles = entries
+      .filter((entry) => entry.isFile() && (entry.name.endsWith('.ldb') || entry.name.endsWith('.log')))
+      .map((entry) => entry.name)
+
+    for (const fileName of dataFiles) {
+      const filePath = join(levelDbPath, fileName)
+      let mtimeMs = 0
+      let raw = ''
+
+      try {
+        const stats = await stat(filePath)
+        mtimeMs = stats.mtimeMs
+        raw = await new Promise<string>((resolve) => {
+          execFile('/usr/bin/strings', ['-a', filePath], (error, stdout) => {
+            if (error) {
+              resolve('')
+              return
+            }
+            resolve(stdout)
+          })
+        })
+      } catch {
+        continue
+      }
+
+      const jsonMatches = raw.match(/\[\{"id":"ab-[\s\S]*?\}\]/g) ?? []
+      for (const match of jsonMatches) {
+        try {
+          const parsed = JSON.parse(match)
+          if (!Array.isArray(parsed) || parsed.length === 0) continue
+          const score = parsed.reduce((total, item) => {
+            if (!item || typeof item !== 'object') return total
+            const record = item as Record<string, unknown>
+            const hasName = typeof record.name === 'string' && record.name.length > 0
+            const hasScript = typeof record.script === 'string' && record.script.length > 0
+            const hasHtml = typeof record.html === 'string' && record.html.length > 0
+            return total + (hasName ? 1 : 0) + (hasScript ? 3 : 0) + (hasHtml ? 2 : 0)
+          }, 0)
+
+          candidates.push({
+            artboards: parsed,
+            score,
+            mtimeMs
+          })
+        } catch {
+          // Ignore malformed substrings from LevelDB pages.
+        }
+      }
+    }
+  } catch {
+    return []
+  }
+
+  if (candidates.length === 0) return []
+
+  candidates.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score
+    if (right.artboards.length !== left.artboards.length) return right.artboards.length - left.artboards.length
+    return right.mtimeMs - left.mtimeMs
+  })
+
+  return candidates[0]?.artboards ?? []
+}
 
 function clampWindowZoomFactor(value: number): number {
   return Math.min(3, Math.max(0.5, value))
@@ -720,7 +815,8 @@ function createLauncherWindow(): BrowserWindow {
     maximizable: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
-      sandbox: false
+      sandbox: false,
+      autoplayPolicy: 'no-user-gesture-required'
     }
   })
 
@@ -759,7 +855,8 @@ function createEditorWindow(): BrowserWindow {
     icon: getAppIconPath(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
-      sandbox: false
+      sandbox: false,
+      autoplayPolicy: 'no-user-gesture-required'
     }
   })
   const ownerContents = window.webContents
@@ -838,6 +935,7 @@ app.whenReady().then(async () => {
     frameExtractionService,
     imageGenerationService
   )
+  apiBridge.setCanvasStateProvider(() => canvasStateCache)
   apiBridge.start()
   Menu.setApplicationMenu(buildApplicationMenu())
 
@@ -856,12 +954,14 @@ app.whenReady().then(async () => {
       .then((project) => {
         projectStore.setAutosavePath(getProjectAutosavePath(recentState.lastOpenedProjectPath))
         projectStore.loadProject(project, recentState.lastOpenedProjectPath)
+        syncCanvasStateForActiveProject()
         recentProjectsStore.noteOpenedProject(recentState.lastOpenedProjectPath!, project.name)
       })
       .catch(() => {
         recentProjectsStore.removeMissingProject(recentState.lastOpenedProjectPath!)
         projectStore.setAutosavePath(getProjectAutosavePath(null))
         projectStore.createProject('Untitled Project')
+        syncCanvasStateForActiveProject()
       })
   } else {
     const legacyAutosavePath = getLegacyAutosavePath()
@@ -873,6 +973,7 @@ app.whenReady().then(async () => {
         }
         projectStore.setAutosavePath(getProjectAutosavePath(null))
         projectStore.loadProject(project, null)
+        syncCanvasStateForActiveProject()
       })
       .catch(() => undefined)
   }
@@ -1012,6 +1113,7 @@ app.whenReady().then(async () => {
     projectStore.setAutosavePath(getProjectAutosavePath(projectPath))
     const project = projectStore.createProject(projectName)
     projectStore.markProjectSaved(projectPath)
+    syncCanvasStateForActiveProject()
     await writeFile(projectPath, JSON.stringify(project, null, 2), 'utf8')
     recentProjectsStore.noteOpenedProject(projectPath, project.name)
     controlStateService.update({
@@ -1442,6 +1544,7 @@ app.whenReady().then(async () => {
       projectStore.setAutosavePath(getProjectAutosavePath(projectPath))
       projectStore.markProjectSaved(projectPath)
     }
+    syncCanvasStateForActiveProject()
 
     await writeFile(projectPath, JSON.stringify(projectStore.getProject(), null, 2), 'utf8')
     recentProjectsStore.noteOpenedProject(projectPath, nextName)
@@ -1480,6 +1583,7 @@ app.whenReady().then(async () => {
     await writeFile(outputPath, JSON.stringify(projectStore.getProject(), null, 2), 'utf8')
     projectStore.markProjectSaved(outputPath)
     projectStore.setAutosavePath(getProjectAutosavePath(outputPath))
+    syncCanvasStateForActiveProject()
     recentProjectsStore.noteOpenedProject(outputPath, projectStore.getProject().name)
     void analyticsService.track(settings.analyticsEnabled, 'project_saved', {
       hasExistingPath: Boolean(targetPath),
@@ -1494,6 +1598,7 @@ app.whenReady().then(async () => {
     const project = await loadBestProjectState(filePath)
     projectStore.setAutosavePath(getProjectAutosavePath(filePath))
     const loaded = projectStore.loadProject(project, filePath)
+    syncCanvasStateForActiveProject()
     recentProjectsStore.noteOpenedProject(filePath, loaded.name)
     controlStateService.update({
       playheadTime: 0,
@@ -1550,6 +1655,97 @@ app.whenReady().then(async () => {
       format: options?.format ?? 'mp4'
     })
     return result
+  })
+
+  // Canvas state storage
+  ipcMain.handle('canvas:saveState', (_event, artboards: unknown[]) => {
+    canvasStateCacheByProject.set(getCanvasStateProjectKey(), artboards)
+    canvasStateCache = artboards
+    return { ok: true }
+  })
+
+  ipcMain.handle('canvas:recoverLegacyState', async () => {
+    const recovered = await recoverLegacyCanvasStateFromLevelDb()
+    if (recovered.length > 0) {
+      canvasStateCacheByProject.set(getCanvasStateProjectKey(), recovered)
+      canvasStateCache = recovered
+    }
+    return { ok: true, artboards: recovered }
+  })
+
+  // Canvas command queue — read and atomically clear so canvas panel processes without duplicates
+  ipcMain.handle('canvas:drainQueue', async () => {
+    const queuePath = join(app.getPath('temp'), 'monet-canvas-queue.json')
+    try {
+      const raw = await readFile(queuePath, 'utf8')
+      const commands = JSON.parse(raw)
+      if (Array.isArray(commands) && commands.length > 0) {
+        await writeFile(queuePath, '[]', 'utf8')
+        return commands
+      }
+    } catch { /* file doesn't exist yet — normal */ }
+    return []
+  })
+
+  // Save a PNG data URL captured from a canvas artboard and import it as a project media asset
+  ipcMain.handle('canvas:saveFrameAsMedia', async (_event, dataUrl: string, name: string) => {
+    try {
+      const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
+      const buffer = Buffer.from(base64, 'base64')
+      const safeName = name.replace(/[^a-z0-9-_]/gi, '_').slice(0, 50)
+      const outputPath = join(app.getPath('temp'), `canvas-frame-${safeName}-${Date.now()}.png`)
+      await writeFile(outputPath, buffer)
+      // importFiles triggers projectStore.subscribe → safeBroadcast('project:updated') automatically
+      const [asset] = projectStore.importFiles([outputPath])
+      return { ok: true, assetId: asset?.id }
+    } catch (err) {
+      console.warn('[Canvas] saveFrameAsMedia failed:', err)
+      return { ok: false }
+    }
+  })
+
+  // Write active view to a temp file so hooks/scripts can read it instantly without IPC race
+  ipcMain.handle('app:setActiveView', (_event, view: 'editor' | 'canvas') => {
+    controlStateService.update({ activeView: view })
+    const tmpPath = join(app.getPath('temp'), 'monet-active-view')
+    writeFile(tmpPath, view, 'utf8').catch(() => undefined)
+    return { ok: true }
+  })
+
+  // Export canvas state (artboards) to a JSON file via Save dialog
+  ipcMain.handle('canvas:exportState', async (_event, artboards: unknown) => {
+    const win = BrowserWindow.getFocusedWindow() ?? editorWindow
+    if (!win) return { ok: false, error: 'No window' }
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Export Monet Canvas',
+      defaultPath: `monet-canvas-${Date.now()}.json`,
+      filters: [{ name: 'Monet Canvas', extensions: ['json'] }]
+    })
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+    const payload = { version: 1, exportedAt: new Date().toISOString(), artboards }
+    await writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf8')
+    return { ok: true, filePath: result.filePath }
+  })
+
+  // Import canvas state from a JSON file via Open dialog
+  ipcMain.handle('canvas:importState', async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? editorWindow
+    if (!win) return { ok: false, error: 'No window' }
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Import Monet Canvas',
+      properties: ['openFile'],
+      filters: [{ name: 'Monet Canvas', extensions: ['json'] }]
+    })
+    if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true }
+    try {
+      const raw = await readFile(result.filePaths[0], 'utf8')
+      const parsed = JSON.parse(raw)
+      // Accept either { artboards: [...] } envelope or a raw array
+      const artboards = Array.isArray(parsed) ? parsed : Array.isArray(parsed.artboards) ? parsed.artboards : []
+      return { ok: true, artboards, filePath: result.filePaths[0] }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Parse failed' }
+    }
   })
 
   ipcMain.handle('terminal:createSession', async (event, options: { cols: number; rows: number; cwd?: string; shell?: string }) => {

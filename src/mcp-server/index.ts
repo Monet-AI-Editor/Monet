@@ -493,6 +493,198 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ['compositionId']
         }
+      },
+      // ── Canvas tools ──────────────────────────────────────────────────────
+      {
+        name: 'canvas_get_frames',
+        description: 'Get all canvas frames (artboards) with their content, mode, and dimensions',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      },
+      {
+        name: 'canvas_add_frame',
+        description: 'Add a new canvas frame. mode can be html, paperjs, or matterjs.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name:   { type: 'string', description: 'Frame name' },
+            width:  { type: 'number', description: 'Frame width in pixels (default 1280)' },
+            height: { type: 'number', description: 'Frame height in pixels (default 720)' },
+            mode:   { type: 'string', enum: ['html', 'paperjs', 'matterjs'], description: 'Frame mode (default html)' },
+            html:   { type: 'string', description: 'HTML content (for html mode)' },
+            script: { type: 'string', description: 'Script content (for paperjs or matterjs mode)' }
+          },
+          required: ['name']
+        }
+      },
+      {
+        name: 'canvas_update_frame',
+        description: 'Update an existing canvas frame content, name, dimensions, or mode',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id:     { type: 'string', description: 'Frame ID to update' },
+            name:   { type: 'string', description: 'New frame name' },
+            width:  { type: 'number', description: 'New frame width in pixels' },
+            height: { type: 'number', description: 'New frame height in pixels' },
+            mode:   { type: 'string', enum: ['html', 'paperjs', 'matterjs'], description: 'Frame mode' },
+            html:   { type: 'string', description: 'HTML content (for html mode)' },
+            script: { type: 'string', description: 'Script content (for paperjs/matterjs mode)' }
+          },
+          required: ['id']
+        }
+      },
+      {
+        name: 'canvas_delete_frame',
+        description: 'Delete a canvas frame by ID',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Frame ID to delete' }
+          },
+          required: ['id']
+        }
+      },
+      {
+        name: 'canvas_run_paperjs',
+        description: 'Set a canvas frame to Paper.js mode and set its script. Creates a new frame if no id provided.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id:     { type: 'string', description: 'Frame ID to update (if omitted, a new frame is created)' },
+            name:   { type: 'string', description: 'Frame name (used when creating a new frame)' },
+            script: { type: 'string', description: 'Paper.js script to run in the frame' },
+            width:  { type: 'number', description: 'Frame width (for new frames, default 1280)' },
+            height: { type: 'number', description: 'Frame height (for new frames, default 720)' }
+          },
+          required: ['script']
+        }
+      },
+      {
+        name: 'canvas_run_matterjs',
+        description: 'Set a canvas frame to Matter.js mode and set its physics scene. Creates a new frame if no id provided.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id:     { type: 'string', description: 'Frame ID to update (if omitted, a new frame is created)' },
+            name:   { type: 'string', description: 'Frame name (used when creating a new frame)' },
+            script: { type: 'string', description: 'Matter.js scene script to run in the frame' },
+            width:  { type: 'number', description: 'Frame width (for new frames, default 1280)' },
+            height: { type: 'number', description: 'Frame height (for new frames, default 720)' }
+          },
+          required: ['script']
+        }
+      },
+      {
+        name: 'canvas_paperjs_draw_shape',
+        description: 'Generate Paper.js code to draw a shape (circle, rect, star, polygon). Returns code you can use with canvas_run_paperjs.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            shape:       { type: 'string', enum: ['circle', 'rect', 'star', 'polygon'], description: 'Shape type' },
+            x:           { type: 'number', description: 'X position (default: center)' },
+            y:           { type: 'number', description: 'Y position (default: center)' },
+            size:        { type: 'number', description: 'Size in pixels (radius for circle/star, side for polygon, default 80)' },
+            width:       { type: 'number', description: 'Width for rect (default 160)' },
+            height:      { type: 'number', description: 'Height for rect (default 100)' },
+            fillColor:   { type: 'string', description: 'Fill color hex (default #5b82f7)' },
+            strokeColor: { type: 'string', description: 'Stroke color hex' },
+            strokeWidth: { type: 'number', description: 'Stroke width (default 0)' },
+            points:      { type: 'number', description: 'Points for star/polygon (default 5)' },
+            animate:     { type: 'boolean', description: 'Add a rotation animation (default false)' }
+          },
+          required: ['shape']
+        }
+      },
+      {
+        name: 'canvas_paperjs_draw_text',
+        description: 'Generate Paper.js code to render styled text. Returns code you can use with canvas_run_paperjs.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            text:      { type: 'string', description: 'Text content' },
+            x:         { type: 'number', description: 'X position' },
+            y:         { type: 'number', description: 'Y position' },
+            fontSize:  { type: 'number', description: 'Font size in px (default 48)' },
+            color:     { type: 'string', description: 'Text color (default #ffffff)' },
+            fontFamily:{ type: 'string', description: 'Font family (default Inter)' },
+            animate:   { type: 'boolean', description: 'Add a floating animation (default false)' }
+          },
+          required: ['text']
+        }
+      },
+      {
+        name: 'canvas_paperjs_animate',
+        description: 'Generate Paper.js animation code with an onFrame callback. Returns code you can use with canvas_run_paperjs.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            style:       { type: 'string', enum: ['orbit', 'wave', 'particles', 'spiral', 'bounce'], description: 'Animation style' },
+            color:       { type: 'string', description: 'Primary color (default #5b82f7)' },
+            count:       { type: 'number', description: 'Number of objects (default 10)' },
+            speed:       { type: 'number', description: 'Animation speed multiplier (default 1)' }
+          },
+          required: ['style']
+        }
+      },
+      {
+        name: 'canvas_matterjs_scene',
+        description: 'Generate a Matter.js scene with configurable physics bodies. Returns code you can use with canvas_run_matterjs.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            style:    { type: 'string', enum: ['balls', 'stacks', 'pendulum', 'cloth', 'bridge', 'ragdoll'], description: 'Scene style' },
+            gravity:  { type: 'number', description: 'Gravity Y (0 = zero-g, 1 = normal, default 1)' },
+            count:    { type: 'number', description: 'Number of bodies (default 10)' },
+            colors:   { type: 'array',  items: { type: 'string' }, description: 'Colors for bodies' },
+            restitution: { type: 'number', description: 'Bounciness 0–1 (default 0.7)' }
+          },
+          required: ['style']
+        }
+      },
+      {
+        name: 'canvas_matterjs_add_bodies',
+        description: 'Generate Matter.js code to add additional bodies to an existing scene.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            bodies: {
+              type: 'array',
+              description: 'Bodies to add',
+              items: {
+                type: 'object',
+                properties: {
+                  type:        { type: 'string', enum: ['circle', 'rect', 'polygon'] },
+                  x:           { type: 'number' },
+                  y:           { type: 'number' },
+                  radius:      { type: 'number' },
+                  width:       { type: 'number' },
+                  height:      { type: 'number' },
+                  sides:       { type: 'number' },
+                  isStatic:    { type: 'boolean' },
+                  fillColor:   { type: 'string' },
+                  restitution: { type: 'number' }
+                }
+              }
+            }
+          },
+          required: ['bodies']
+        }
+      },
+      {
+        name: 'canvas_clear_canvas',
+        description: 'Clear all canvas frames (artboards)',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      },
+      {
+        name: 'canvas_set_zoom',
+        description: 'Set the canvas viewport zoom level',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            zoom: { type: 'number', description: 'Zoom level (0.05 to 8, 1 = 100%)' }
+          },
+          required: ['zoom']
+        }
       }
     ]
   }
@@ -1142,6 +1334,153 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: JSON.stringify({ success: true, outputPath, assetId }, null, 2)
           }]
         }
+      }
+
+      // ── Canvas tools ──────────────────────────────────────────────────────
+      case 'canvas_get_frames': {
+        const result = await callLiveApp('canvas-get-state', {})
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+      }
+
+      case 'canvas_add_frame': {
+        const { name, width = 1280, height = 720, mode = 'html', html = '', script = '' } = args as {
+          name: string; width?: number; height?: number; mode?: string; html?: string; script?: string
+        }
+        await callLiveApp('canvas-add-frame', { name, width, height, mode, html, script })
+        return { content: [{ type: 'text', text: `Added ${mode} frame "${name}" (${width}×${height})` }] }
+      }
+
+      case 'canvas_update_frame': {
+        const { id, ...rest } = args as { id: string; [key: string]: unknown }
+        await callLiveApp('canvas-update-frame', { id, ...rest })
+        return { content: [{ type: 'text', text: `Updated frame ${id}` }] }
+      }
+
+      case 'canvas_delete_frame': {
+        const { id } = args as { id: string }
+        await callLiveApp('canvas-delete-frame', { id })
+        return { content: [{ type: 'text', text: `Deleted frame ${id}` }] }
+      }
+
+      case 'canvas_run_paperjs': {
+        const { id, name = 'Paper.js Frame', script, width = 1280, height = 720 } = args as {
+          id?: string; name?: string; script: string; width?: number; height?: number
+        }
+        if (id) {
+          await callLiveApp('canvas-update-frame', { id, mode: 'paperjs', script })
+          return { content: [{ type: 'text', text: `Set Paper.js script on frame ${id}` }] }
+        } else {
+          await callLiveApp('canvas-add-frame', { name, width, height, mode: 'paperjs', script, html: '' })
+          return { content: [{ type: 'text', text: `Created Paper.js frame "${name}" (${width}×${height})` }] }
+        }
+      }
+
+      case 'canvas_run_matterjs': {
+        const { id, name = 'Matter.js Frame', script, width = 1280, height = 720 } = args as {
+          id?: string; name?: string; script: string; width?: number; height?: number
+        }
+        if (id) {
+          await callLiveApp('canvas-update-frame', { id, mode: 'matterjs', script })
+          return { content: [{ type: 'text', text: `Set Matter.js scene on frame ${id}` }] }
+        } else {
+          await callLiveApp('canvas-add-frame', { name, width, height, mode: 'matterjs', script, html: '' })
+          return { content: [{ type: 'text', text: `Created Matter.js frame "${name}" (${width}×${height})` }] }
+        }
+      }
+
+      case 'canvas_paperjs_draw_shape': {
+        const {
+          shape, x, y, size = 80, width: w = 160, height: h = 100,
+          fillColor = '#5b82f7', strokeColor, strokeWidth = 0,
+          points = 5, animate = false
+        } = args as {
+          shape: string; x?: number; y?: number; size?: number; width?: number; height?: number;
+          fillColor?: string; strokeColor?: string; strokeWidth?: number; points?: number; animate?: boolean
+        }
+        const cx = x != null ? x : 'view.center.x'
+        const cy = y != null ? y : 'view.center.y'
+        const strokePart = strokeColor ? `, strokeColor: '${strokeColor}', strokeWidth: ${strokeWidth}` : ''
+        let code = ''
+        if (shape === 'circle') {
+          code = `var shape = new Path.Circle({ center: [${cx}, ${cy}], radius: ${size}, fillColor: '${fillColor}'${strokePart} });`
+        } else if (shape === 'rect') {
+          code = `var shape = new Path.Rectangle({ point: [${cx} - ${w / 2}, ${cy} - ${h / 2}], size: [${w}, ${h}], fillColor: '${fillColor}'${strokePart} });`
+        } else if (shape === 'star') {
+          code = `var shape = new Path.Star({ center: [${cx}, ${cy}], points: ${points}, radius1: ${size / 2}, radius2: ${size}, fillColor: '${fillColor}'${strokePart} });`
+        } else if (shape === 'polygon') {
+          code = `var shape = new Path.RegularPolygon({ center: [${cx}, ${cy}], sides: ${points}, radius: ${size}, fillColor: '${fillColor}'${strokePart} });`
+        }
+        if (animate) {
+          code += `\nview.onFrame = function(event) { shape.rotate(1); };`
+        }
+        return { content: [{ type: 'text', text: `Paper.js code for ${shape}:\n\`\`\`javascript\n${code}\n\`\`\`\n\nApply with canvas_run_paperjs` }] }
+      }
+
+      case 'canvas_paperjs_draw_text': {
+        const { text, x, y, fontSize = 48, color = '#ffffff', fontFamily = 'Inter', animate = false } = args as {
+          text: string; x?: number; y?: number; fontSize?: number; color?: string; fontFamily?: string; animate?: boolean
+        }
+        const px = x != null ? x : 'view.center.x'
+        const py = y != null ? y : 'view.center.y'
+        let code = `var t = new PointText({\n  content: '${text.replace(/'/g, "\\'")}',\n  point: new Point(${px}, ${py}),\n  fillColor: '${color}',\n  fontSize: ${fontSize},\n  fontFamily: '${fontFamily}',\n  justification: 'center'\n});`
+        if (animate) {
+          code += `\nvar baseY = t.position.y;\nview.onFrame = function(event) {\n  t.position.y = baseY + Math.sin(event.time * 2) * 8;\n};`
+        }
+        return { content: [{ type: 'text', text: `Paper.js text code:\n\`\`\`javascript\n${code}\n\`\`\`\n\nApply with canvas_run_paperjs` }] }
+      }
+
+      case 'canvas_paperjs_animate': {
+        const { style, color = '#5b82f7', count = 10, speed = 1 } = args as {
+          style: string; color?: string; count?: number; speed?: number
+        }
+        const animations: Record<string, string> = {
+          orbit: `var circles = [];\nfor (var i = 0; i < ${count}; i++) {\n  var angle = (i / ${count}) * Math.PI * 2;\n  var r = Math.random() * 100 + 60;\n  var c = new Path.Circle({ center: view.center + new Point(Math.cos(angle) * r, Math.sin(angle) * r), radius: 8 + Math.random() * 12, fillColor: '${color}' });\n  c.__angle = angle; c.__r = r; c.__speed = (Math.random() * 0.5 + 0.5) * ${speed};\n  circles.push(c);\n}\nview.onFrame = function(event) {\n  circles.forEach(function(c) {\n    c.__angle += 0.02 * c.__speed;\n    c.position = view.center + new Point(Math.cos(c.__angle) * c.__r, Math.sin(c.__angle) * c.__r);\n  });\n};`,
+          wave: `var lines = [];\nfor (var i = 0; i < ${count}; i++) {\n  var x = (view.size.width / ${count}) * i + view.size.width / (${count} * 2);\n  var p = new Path.Circle({ center: [x, view.center.y], radius: 6, fillColor: '${color}' });\n  p.__x = x; p.__i = i;\n  lines.push(p);\n}\nview.onFrame = function(event) {\n  lines.forEach(function(p) {\n    p.position.y = view.center.y + Math.sin(event.time * ${speed} * 3 + p.__i * 0.6) * 60;\n  });\n};`,
+          particles: `var parts = [];\nfor (var i = 0; i < ${count * 5}; i++) {\n  var p = new Path.Circle({ center: [Math.random() * view.size.width, Math.random() * view.size.height], radius: Math.random() * 5 + 2, fillColor: '${color}', opacity: Math.random() * 0.7 + 0.3 });\n  p.__vx = (Math.random() - 0.5) * 2 * ${speed}; p.__vy = (Math.random() - 0.5) * 2 * ${speed};\n  parts.push(p);\n}\nview.onFrame = function() {\n  parts.forEach(function(p) {\n    p.position.x += p.__vx; p.position.y += p.__vy;\n    if (p.position.x < 0 || p.position.x > view.size.width) p.__vx *= -1;\n    if (p.position.y < 0 || p.position.y > view.size.height) p.__vy *= -1;\n  });\n};`,
+          spiral: `var path = new Path({ strokeColor: '${color}', strokeWidth: 2 });\nvar angle = 0;\nview.onFrame = function() {\n  angle += 0.08 * ${speed};\n  var r = angle * 8;\n  var pt = view.center + new Point(Math.cos(angle) * r, Math.sin(angle) * r);\n  path.add(pt);\n  if (path.segments.length > 300) path.removeSegment(0);\n};`,
+          bounce: `var balls = [];\nfor (var i = 0; i < ${count}; i++) {\n  var b = new Path.Circle({ center: [Math.random() * view.size.width, Math.random() * view.size.height / 2], radius: 15 + Math.random() * 20, fillColor: '${color}' });\n  b.__vy = Math.random() * 3 * ${speed}; b.__vx = (Math.random() - 0.5) * 3 * ${speed}; b.__g = 0.3;\n  balls.push(b);\n}\nview.onFrame = function() {\n  balls.forEach(function(b) {\n    b.__vy += b.__g; b.position.x += b.__vx; b.position.y += b.__vy;\n    if (b.position.y > view.size.height - b.bounds.height / 2) { b.position.y = view.size.height - b.bounds.height / 2; b.__vy *= -0.7; }\n    if (b.position.x < b.bounds.width / 2 || b.position.x > view.size.width - b.bounds.width / 2) b.__vx *= -1;\n  });\n};`
+        }
+        const code = animations[style] || animations.orbit
+        return { content: [{ type: 'text', text: `Paper.js ${style} animation:\n\`\`\`javascript\n${code}\n\`\`\`\n\nApply with canvas_run_paperjs` }] }
+      }
+
+      case 'canvas_matterjs_scene': {
+        const { style, gravity = 1, count = 10, colors = ['#5b82f7', '#f07178', '#8bd49c', '#ffcb6b'], restitution = 0.7 } = args as {
+          style: string; gravity?: number; count?: number; colors?: string[]; restitution?: number
+        }
+        const colorArr = JSON.stringify(colors)
+        const scenes: Record<string, string> = {
+          balls: `var colors = ${colorArr};\nvar ground = Bodies.rectangle(width/2, height+25, width+50, 50, { isStatic: true, render: { fillStyle: '#334155' } });\nvar wallL = Bodies.rectangle(-25, height/2, 50, height, { isStatic: true });\nvar wallR = Bodies.rectangle(width+25, height/2, 50, height, { isStatic: true });\nComposite.add(engine.world, [ground, wallL, wallR]);\nfor (var i = 0; i < ${count}; i++) {\n  var b = Bodies.circle(Math.random() * (width - 100) + 50, Math.random() * height / 2, 15 + Math.random() * 25, { restitution: ${restitution}, render: { fillStyle: colors[i % colors.length] } });\n  Composite.add(engine.world, b);\n}\nengine.gravity.y = ${gravity};`,
+          stacks: `var colors = ${colorArr};\nvar ground = Bodies.rectangle(width/2, height-25, width, 50, { isStatic: true, render: { fillStyle: '#334155' } });\nComposite.add(engine.world, ground);\nfor (var col = 0; col < 5; col++) {\n  for (var row = 0; row < ${Math.max(2, Math.round(count / 5))}; row++) {\n    var b = Bodies.rectangle(150 + col * (width - 200) / 4, height - 75 - row * 55, 60, 50, { render: { fillStyle: colors[(col + row) % colors.length] } });\n    Composite.add(engine.world, b);\n  }\n}\nengine.gravity.y = ${gravity};`,
+          pendulum: `var group = Body.nextGroup(true);\nvar pivot = { x: width/2, y: 100 };\nvar prev = null;\nfor (var i = 0; i < ${Math.max(2, count)}; i++) {\n  var bob = Bodies.circle(pivot.x, pivot.y + 80 + i * 80, 20, { collisionFilter: { group: group }, render: { fillStyle: ${colorArr}[i % ${colorArr}.length] || '#5b82f7' } });\n  var c = Constraint.create({ pointA: prev ? undefined : pivot, bodyA: prev || undefined, bodyB: bob, length: 80, stiffness: 1 });\n  if (!prev) c.pointA = pivot; else { c.bodyA = prev; c.pointA = { x: 0, y: 0 }; }\n  Composite.add(engine.world, [bob, c]);\n  prev = bob;\n}\nengine.gravity.y = ${gravity};`,
+          bridge: `var colors = ${colorArr};\nvar ground = Bodies.rectangle(width/2, height, width, 20, { isStatic: true, render: { fillStyle: '#334155' } });\nComposite.add(engine.world, ground);\nvar planks = [], prev = null;\nfor (var i = 0; i < 10; i++) {\n  var x = width * 0.15 + i * (width * 0.7 / 9);\n  var p = Bodies.rectangle(x, height / 2, width * 0.7 / 10, 20, { render: { fillStyle: colors[i % colors.length] } });\n  Composite.add(engine.world, p);\n  if (prev) Composite.add(engine.world, Constraint.create({ bodyA: prev, bodyB: p, stiffness: 0.9, length: width * 0.7 / 9 }));\n  else Composite.add(engine.world, Constraint.create({ pointA: { x: width * 0.15, y: height / 2 }, bodyB: p, stiffness: 1 }));\n  prev = p;\n}\nif (prev) Composite.add(engine.world, Constraint.create({ bodyA: prev, pointB: { x: width * 0.85, y: height / 2 }, stiffness: 1 }));\nfor (var j = 0; j < ${count}; j++) {\n  Composite.add(engine.world, Bodies.circle(Math.random() * width * 0.6 + width * 0.2, 100, 12, { restitution: ${restitution}, render: { fillStyle: '#f07178' } }));\n}\nengine.gravity.y = ${gravity};`,
+          ragdoll: `var colors = ${colorArr};\nvar ground = Bodies.rectangle(width/2, height-10, width, 20, { isStatic: true, render: { fillStyle: '#334155' } });\nComposite.add(engine.world, ground);\nfor (var p = 0; p < Math.min(${count}, 3); p++) {\n  var cx = 200 + p * 300, cy = 100;\n  var head = Bodies.circle(cx, cy, 25, { render: { fillStyle: colors[0] } });\n  var torso = Bodies.rectangle(cx, cy + 70, 40, 80, { render: { fillStyle: colors[1 % colors.length] } });\n  var lArm = Bodies.rectangle(cx - 45, cy + 55, 25, 60, { render: { fillStyle: colors[2 % colors.length] } });\n  var rArm = Bodies.rectangle(cx + 45, cy + 55, 25, 60, { render: { fillStyle: colors[2 % colors.length] } });\n  var lLeg = Bodies.rectangle(cx - 18, cy + 155, 25, 70, { render: { fillStyle: colors[3 % colors.length] } });\n  var rLeg = Bodies.rectangle(cx + 18, cy + 155, 25, 70, { render: { fillStyle: colors[3 % colors.length] } });\n  Composite.add(engine.world, [head, torso, lArm, rArm, lLeg, rLeg,\n    Constraint.create({ bodyA: head, bodyB: torso, pointA: { x: 0, y: 25 }, pointB: { x: 0, y: -40 }, stiffness: 0.6 }),\n    Constraint.create({ bodyA: torso, bodyB: lArm, pointA: { x: -20, y: -30 }, pointB: { x: 0, y: -30 }, stiffness: 0.6 }),\n    Constraint.create({ bodyA: torso, bodyB: rArm, pointA: { x: 20, y: -30 }, pointB: { x: 0, y: -30 }, stiffness: 0.6 }),\n    Constraint.create({ bodyA: torso, bodyB: lLeg, pointA: { x: -18, y: 40 }, pointB: { x: 0, y: -35 }, stiffness: 0.6 }),\n    Constraint.create({ bodyA: torso, bodyB: rLeg, pointA: { x: 18, y: 40 }, pointB: { x: 0, y: -35 }, stiffness: 0.6 })\n  ]);\n}\nengine.gravity.y = ${gravity};`
+        }
+        const code = scenes[style] || scenes.balls
+        return { content: [{ type: 'text', text: `Matter.js ${style} scene:\n\`\`\`javascript\n${code}\n\`\`\`\n\nApply with canvas_run_matterjs` }] }
+      }
+
+      case 'canvas_matterjs_add_bodies': {
+        const { bodies } = args as { bodies: Array<{ type: string; x: number; y: number; radius?: number; width?: number; height?: number; sides?: number; isStatic?: boolean; fillColor?: string; restitution?: number }> }
+        const lines = bodies.map(b => {
+          const opts = `{ isStatic: ${b.isStatic ?? false}, restitution: ${b.restitution ?? 0.5}, render: { fillStyle: '${b.fillColor ?? '#5b82f7'}' } }`
+          if (b.type === 'circle') return `Composite.add(engine.world, Bodies.circle(${b.x}, ${b.y}, ${b.radius ?? 20}, ${opts}));`
+          if (b.type === 'rect') return `Composite.add(engine.world, Bodies.rectangle(${b.x}, ${b.y}, ${b.width ?? 60}, ${b.height ?? 60}, ${opts}));`
+          if (b.type === 'polygon') return `Composite.add(engine.world, Bodies.polygon(${b.x}, ${b.y}, ${b.sides ?? 5}, ${b.radius ?? 30}, ${opts}));`
+          return ''
+        }).filter(Boolean).join('\n')
+        return { content: [{ type: 'text', text: `Matter.js add-bodies code:\n\`\`\`javascript\n${lines}\n\`\`\`\n\nAppend to existing scene script and apply with canvas_run_matterjs` }] }
+      }
+
+      case 'canvas_clear_canvas': {
+        await callLiveApp('canvas-clear', {})
+        return { content: [{ type: 'text', text: 'Canvas cleared' }] }
+      }
+
+      case 'canvas_set_zoom': {
+        const { zoom } = args as { zoom: number }
+        await callLiveApp('canvas-set-zoom', { zoom })
+        return { content: [{ type: 'text', text: `Canvas zoom set to ${zoom}` }] }
       }
 
       default:

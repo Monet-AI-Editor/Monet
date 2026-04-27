@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { TerminalSquare, Clock } from 'lucide-react'
+import { TerminalSquare, Clock, Palette, Film, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useEditorStore } from './store/useEditorStore'
 import { TopBar } from './components/TopBar'
 import { LeftSidebar } from './components/LeftSidebar'
@@ -10,10 +10,11 @@ import { SettingsModal } from './components/SettingsModal'
 import { ExportModal } from './components/ExportModal'
 import { ProjectManagerModal } from './components/ProjectManagerModal'
 import { WelcomeScreen } from './components/WelcomeScreen'
+import { CanvasPanel } from './components/CanvasPanel'
 import clsx from 'clsx'
 import type { AppUpdateState } from './types'
 
-type BottomTab = 'timeline' | 'terminal'
+type ViewMode = 'editor' | 'canvas'
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
@@ -35,8 +36,12 @@ export default function App() {
   const isLauncherView = new URLSearchParams(window.location.search).get('view') === 'launcher'
 
   const [isDraggingLeft, setIsDraggingLeft] = useState(false)
-  const [bottomTab, setBottomTab] = useState<BottomTab>('timeline')
+  const [viewMode, setViewMode] = useState<ViewMode>('editor')
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true)
   const [bottomFraction, setBottomFraction] = useState(0.36)
+  // Shared terminal state — one PTY session, persists across view switches
+  const [terminalOpen, setTerminalOpen] = useState(false)
+  const [terminalFraction, setTerminalFraction] = useState(0.36)
   const [terminalGuideOpen, setTerminalGuideOpen] = useState(false)
   const [appUpdateState, setAppUpdateState] = useState<AppUpdateState>({
     status: 'idle',
@@ -121,9 +126,8 @@ export default function App() {
 
     function onMove(me: MouseEvent) {
       const delta = me.clientY - startY
-      const centerH = containerH - 44
-      const minFrac = terminalGuideOpen && bottomTab === 'terminal' ? 0.56 : 0.18
-      const newFrac = Math.max(minFrac, Math.min(0.65, startFrac - delta / centerH))
+      const minFrac = terminalGuideOpen ? 0.56 : 0.18
+      const newFrac = Math.max(minFrac, Math.min(0.65, startFrac - delta / (containerH - 44)))
       setBottomFraction(newFrac)
     }
 
@@ -134,7 +138,29 @@ export default function App() {
 
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-  }, [bottomFraction, bottomTab, terminalGuideOpen])
+  }, [bottomFraction, terminalGuideOpen])
+
+  const startTerminalDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const containerH = containerRef.current?.clientHeight ?? 800
+    const startY = e.clientY
+    const startFrac = terminalFraction
+
+    function onMove(me: MouseEvent) {
+      const delta = me.clientY - startY
+      const minFrac = terminalGuideOpen ? 0.56 : 0.15
+      const newFrac = Math.max(minFrac, Math.min(0.65, startFrac - delta / containerH))
+      setTerminalFraction(newFrac)
+    }
+
+    function onUp() {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [terminalFraction, terminalGuideOpen])
 
   const handleTerminalGuideToggle = useCallback((open: boolean) => {
     setTerminalGuideOpen(open)
@@ -168,6 +194,16 @@ export default function App() {
     }
   }, [])
 
+  // Keep agent-visible control state in sync with active view.
+  // setActiveView also writes to a temp file so hooks read the correct view instantly.
+  useEffect(() => {
+    void window.api.setActiveView(viewMode).catch(() => undefined)
+    void window.api.updateControlState({
+      activeView: viewMode,
+      canvasTerminalOpen: terminalOpen
+    }).catch(() => undefined)
+  }, [viewMode, terminalOpen])
+
   useEffect(() => {
     if (shouldShowWelcome) return
 
@@ -193,6 +229,10 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [shouldShowWelcome, store])
+
+  const canvasProjectStorageKey = store.projectFilePath
+    ? `file:${store.projectFilePath}`
+    : `draft:${store.projectName || 'Untitled Project'}`
 
   return (
     <div
@@ -248,46 +288,112 @@ export default function App() {
             onApplyUpdate={() => void window.api.applyUpdate()}
           />
 
-          {/* Main layout */}
-          <div className="flex flex-1 min-h-0 overflow-hidden">
-            {/* Left Sidebar */}
-            <div className="flex-shrink-0 overflow-hidden" style={{ width: store.leftWidth }}>
-              <LeftSidebar
-                leftTab={store.leftTab}
-                setLeftTab={store.setLeftTab}
-                sequences={store.sequences}
-                assets={store.assets}
-                selectedAssetId={store.selectedAssetId}
-                selectAsset={store.selectAsset}
-                removeAsset={store.removeAsset}
-                importMedia={store.importMedia}
-                activateSequence={store.activateSequence}
-                tasks={store.tasks}
-              />
+          {/* View mode switcher */}
+          <div className="flex items-center px-3 py-1.5 border-b border-border bg-surface-1 flex-shrink-0">
+            <button
+              onClick={() => setViewMode('editor')}
+              className={clsx(
+                'flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors',
+                viewMode === 'editor'
+                  ? 'bg-accent/15 text-accent'
+                  : 'text-text-dim hover:text-text-secondary hover:bg-surface-2'
+              )}
+            >
+              <Film size={12} />
+              Video Editor
+            </button>
+            <button
+              onClick={() => setViewMode('canvas')}
+              className={clsx(
+                'flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors',
+                viewMode === 'canvas'
+                  ? 'bg-accent/15 text-accent'
+                  : 'text-text-dim hover:text-text-secondary hover:bg-surface-2'
+              )}
+            >
+              <Palette size={12} />
+              Monet Canvas
+            </button>
+            {viewMode === 'editor' && (
+              <button
+                onClick={() => setLeftSidebarOpen((current) => !current)}
+                className={clsx(
+                  'ml-2 flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors',
+                  leftSidebarOpen
+                    ? 'text-text-dim hover:text-text-secondary hover:bg-surface-2'
+                    : 'bg-surface-2 text-text-secondary hover:bg-surface-3 hover:text-text-primary'
+                )}
+                title={leftSidebarOpen ? 'Hide left sidebar' : 'Show left sidebar'}
+              >
+                {leftSidebarOpen ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
+                {leftSidebarOpen ? 'Hide Sidebar' : 'Show Sidebar'}
+              </button>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-2xs text-text-dim font-medium tracking-wide select-none">Use AI:</span>
+              <button
+                onClick={() => setTerminalOpen(v => !v)}
+                title={terminalOpen ? 'Close AI terminal' : 'Open AI terminal (Claude Code / Codex)'}
+                className={clsx(
+                  'flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-medium transition-all',
+                  terminalOpen
+                    ? 'border-accent/40 bg-accent/15 text-accent shadow-[0_0_8px_rgba(99,179,237,0.15)]'
+                    : 'border-accent/20 bg-accent/5 text-accent/70 hover:bg-accent/15 hover:text-accent hover:border-accent/40'
+                )}
+              >
+                <TerminalSquare size={12} />
+                Terminal
+              </button>
             </div>
+          </div>
 
-            {/* Left resize handle */}
-            <div className="resize-handle w-1 flex-shrink-0 cursor-col-resize" onMouseDown={startDrag('left')} />
+          {/* ── Canvas view ── always mounted so terminal PTY survives view switches */}
+          <div className={clsx('flex-1 min-h-0 overflow-hidden', viewMode !== 'canvas' && 'hidden')}>
+            <CanvasPanel projectStorageKey={canvasProjectStorageKey} assets={store.assets} />
+          </div>
 
-            {/* Center — Preview + tabbed bottom panel */}
-            <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                <div className="flex-1 min-h-0 overflow-hidden">
-                  <PreviewMonitor
-                    isPlaying={store.isPlaying}
-                    setIsPlaying={store.setIsPlaying}
-                    playheadTime={store.playheadTime}
-                    setPlayheadTime={store.setPlayheadTime}
-                    totalDuration={store.totalDuration}
-                    activeSequenceWidth={store.activeSequenceWidth}
-                    activeSequenceHeight={store.activeSequenceHeight}
-                    selectedClipId={store.selectedClipId}
-                    selectedAssetId={store.selectedAssetId}
+          {/* ── Editor view ── always mounted */}
+          <div className={clsx('flex flex-1 min-h-0 overflow-hidden', viewMode !== 'editor' && 'hidden')}>
+            {/* Left Sidebar */}
+            {leftSidebarOpen && (
+              <>
+                <div className="flex-shrink-0 overflow-hidden" style={{ width: store.leftWidth }}>
+                  <LeftSidebar
+                    leftTab={store.leftTab}
+                    setLeftTab={store.setLeftTab}
+                    sequences={store.sequences}
                     assets={store.assets}
-                    tracks={store.tracks}
-                    splitSelectedClip={store.splitSelectedClip}
+                    selectedAssetId={store.selectedAssetId}
+                    selectAsset={store.selectAsset}
+                    removeAsset={store.removeAsset}
+                    importMedia={store.importMedia}
+                    activateSequence={store.activateSequence}
+                    tasks={store.tasks}
                   />
                 </div>
+
+                {/* Left resize handle */}
+                <div className="resize-handle w-1 flex-shrink-0 cursor-col-resize" onMouseDown={startDrag('left')} />
+              </>
+            )}
+
+            {/* Center — Preview + Timeline */}
+            <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <PreviewMonitor
+                  isPlaying={store.isPlaying}
+                  setIsPlaying={store.setIsPlaying}
+                  playheadTime={store.playheadTime}
+                  setPlayheadTime={store.setPlayheadTime}
+                  totalDuration={store.totalDuration}
+                  activeSequenceWidth={store.activeSequenceWidth}
+                  activeSequenceHeight={store.activeSequenceHeight}
+                  selectedClipId={store.selectedClipId}
+                  selectedAssetId={store.selectedAssetId}
+                  assets={store.assets}
+                  tracks={store.tracks}
+                  splitSelectedClip={store.splitSelectedClip}
+                />
               </div>
 
               <div
@@ -303,41 +409,61 @@ export default function App() {
                   <TabButton
                     label="Timeline"
                     icon={<Clock size={11} />}
-                    active={bottomTab === 'timeline'}
-                    onClick={() => setBottomTab('timeline')}
-                  />
-                  <TabButton
-                    label="Terminal"
-                    icon={<TerminalSquare size={11} />}
-                    active={bottomTab === 'terminal'}
-                    onClick={() => setBottomTab('terminal')}
+                    active={true}
+                    onClick={() => {}}
                   />
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-hidden relative">
-                  <div className={bottomTab === 'timeline' ? 'absolute inset-0' : 'absolute inset-0 pointer-events-none invisible'}>
-                    <Timeline
-                      tracks={store.tracks}
-                      assets={store.assets}
-                      selectedClipId={store.selectedClipId}
-                      playheadTime={store.playheadTime}
-                      totalDuration={store.totalDuration}
-                      zoom={store.zoom}
-                      selectClip={store.selectClip}
-                      setPlayheadTime={store.setPlayheadTime}
-                      setZoom={store.setZoom}
-                      addTrack={store.addTrack}
-                    />
-                  </div>
-                  <div className={bottomTab === 'terminal' ? 'absolute inset-0' : 'absolute inset-0 pointer-events-none invisible'}>
-                    <TerminalPanel
-                      aiSettings={store.aiSettings}
-                      persistAISettings={store.persistAISettings}
-                      onGuideToggle={handleTerminalGuideToggle}
-                    />
-                  </div>
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <Timeline
+                    tracks={store.tracks}
+                    assets={store.assets}
+                    selectedClipId={store.selectedClipId}
+                    playheadTime={store.playheadTime}
+                    totalDuration={store.totalDuration}
+                    zoom={store.zoom}
+                    selectClip={store.selectClip}
+                    setPlayheadTime={store.setPlayheadTime}
+                    setZoom={store.setZoom}
+                    addTrack={store.addTrack}
+                  />
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* ── Shared terminal — always mounted, CSS-toggled so the PTY session persists ── */}
+          <div
+            className={clsx(
+              'flex-shrink-0 flex flex-col overflow-hidden border-t border-border',
+              !terminalOpen && 'hidden'
+            )}
+            style={{ height: terminalOpen ? `${terminalFraction * 100}%` : undefined }}
+          >
+            <div className="flex items-center gap-0 border-b border-border bg-surface-1 flex-shrink-0 px-2">
+              <div className="flex items-center gap-1.5 px-3 py-2 text-2xs font-medium text-text-primary border-b-2 border-accent -mb-px">
+                <TerminalSquare size={11} />
+                Terminal
+              </div>
+              <div className="flex-1" />
+              <button
+                onClick={() => setTerminalOpen(false)}
+                className="px-2 py-1.5 text-text-dim hover:text-text-secondary transition-colors"
+                title="Close terminal"
+              >
+                <X size={11} />
+              </button>
+            </div>
+            <div
+              className="h-1 flex-shrink-0 bg-border hover:bg-accent/40 cursor-row-resize transition-colors"
+              onMouseDown={startTerminalDrag}
+            />
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <TerminalPanel
+                aiSettings={store.aiSettings}
+                persistAISettings={store.persistAISettings}
+                onGuideToggle={handleTerminalGuideToggle}
+              />
             </div>
           </div>
         </>

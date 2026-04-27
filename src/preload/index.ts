@@ -115,7 +115,20 @@ const api = {
     ipcRenderer.on('editor:exportProgress', subscription)
     return () => ipcRenderer.removeListener('editor:exportProgress', subscription)
   },
-  toFileUrl: (filePath: string) => `media://asset?path=${encodeURIComponent(filePath)}`
+  toFileUrl: (filePath: string) => `media://asset?path=${encodeURIComponent(filePath)}`,
+  saveCanvasState: (artboards: unknown[]) => ipcRenderer.invoke('canvas:saveState', artboards),
+  recoverLegacyCanvasState: () => ipcRenderer.invoke('canvas:recoverLegacyState') as Promise<{ ok: boolean; artboards?: unknown[] }>,
+  exportCanvasState: (artboards: unknown[]) => ipcRenderer.invoke('canvas:exportState', artboards) as Promise<{ ok: boolean; filePath?: string; canceled?: boolean; error?: string }>,
+  importCanvasState: () => ipcRenderer.invoke('canvas:importState') as Promise<{ ok: boolean; artboards?: unknown[]; filePath?: string; canceled?: boolean; error?: string }>,
+  setActiveView: (view: 'editor' | 'canvas') => ipcRenderer.invoke('app:setActiveView', view),
+  drainCanvasQueue: () => ipcRenderer.invoke('canvas:drainQueue') as Promise<Array<{ id: string; command: string; args: Record<string, unknown> }>>,
+  onCanvasCommand: (listener: (payload: { command: string; args: Record<string, unknown> }) => void) => {
+    const subscription = (_event: Electron.IpcRendererEvent, payload: { command: string; args: Record<string, unknown> }) => listener(payload)
+    ipcRenderer.on('canvas:command', subscription)
+    return () => ipcRenderer.removeListener('canvas:command', subscription)
+  },
+  saveFrameAsMedia: (dataUrl: string, name: string) =>
+    ipcRenderer.invoke('canvas:saveFrameAsMedia', dataUrl, name) as Promise<{ ok: boolean; assetId?: string }>,
 }
 
 if (process.contextIsolated) {
