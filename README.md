@@ -330,6 +330,8 @@ Monet is released under the MIT License.
 
 - [xterm.js](https://xtermjs.org) — terminal emulator powering the embedded shell
 - [Remotion](https://www.remotion.dev) — React-based video composition and rendering
+- [Paper.js](http://paperjs.org) — vector graphics scripting in Monet Canvas (paperjs frames)
+- [Matter.js](https://brm.io/matter-js/) — 2D rigid-body physics engine in Monet Canvas (matterjs frames)
 - [node-pty](https://github.com/microsoft/node-pty) — pseudo-terminal backend
 - [FFmpeg](https://ffmpeg.org) — video export and processing
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — local transcription runtime
