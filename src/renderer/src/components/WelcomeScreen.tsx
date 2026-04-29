@@ -112,7 +112,7 @@ export function WelcomeScreen({
           <div className="mb-6 text-center">
             <div className="text-2xl font-semibold tracking-tight text-white">Monet</div>
             <div className="mt-1.5 text-xs text-white/40">
-              {showOnboarding ? 'Set up Monet once, then start cutting.' : 'Open a project. Start cutting.'}
+              {showOnboarding ? 'Set up Monet once, then edit with AI.' : 'Edit faster with AI-native video workflows.'}
             </div>
           </div>
 

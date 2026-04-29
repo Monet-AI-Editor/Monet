@@ -4,6 +4,7 @@ import { existsSync } from 'fs'
 import { dirname, join } from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { resolveFfmpegBinary } from './media-binaries'
 
 const execFileAsync = promisify(execFile)
 
@@ -46,7 +47,7 @@ export class PreviewProxyService {
   private async generatePreview(filePath: string, targetPath: string): Promise<void> {
     await mkdir(dirname(targetPath), { recursive: true })
 
-    await execFileAsync('ffmpeg', [
+    await execFileAsync(resolveFfmpegBinary(), [
       '-y',
       '-i', filePath,
       '-map', '0:v:0',

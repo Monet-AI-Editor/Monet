@@ -14,6 +14,7 @@ import type {
   TimelineTrackRecord
 } from '../../shared/editor'
 import { createId } from './id'
+import { resolveFfprobeBinary } from './media-binaries'
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.avi', '.webm', '.mpg', '.mpeg', '.wmv', '.ts', '.mts', '.m2ts'])
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.aac', '.m4a', '.flac', '.ogg', '.opus', '.aif', '.aiff'])
@@ -46,7 +47,7 @@ function probeMediaDuration(filePath: string, type: MediaType): number {
 
   try {
     const raw = execFileSync(
-      'ffprobe',
+      resolveFfprobeBinary(),
       [
         '-v',
         'error',
@@ -74,7 +75,7 @@ function probeMediaDuration(filePath: string, type: MediaType): number {
       return Math.max(...candidates)
     }
   } catch (error) {
-    console.warn(`[ProjectStore] Failed to probe duration for ${filePath}:`, error)
+    console.warn(`[ProjectStore] Failed to probe duration for ${filePath}. Falling back to ${getFallbackDuration(type)}s:`, error)
   }
 
   return getFallbackDuration(type)

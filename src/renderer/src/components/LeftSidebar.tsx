@@ -112,10 +112,10 @@ function MediaPanel({ assets, selectedAssetId, selectAsset, removeAsset, importM
       <MediaGroup label="Audio" icon={<Music size={11} />} items={audios} selectedAssetId={selectedAssetId} selectAsset={selectAsset} removeAsset={removeAsset} />
       <MediaGroup label="Images" icon={<Image size={11} />} items={images} selectedAssetId={selectedAssetId} selectAsset={selectAsset} removeAsset={removeAsset} />
 
-      {/* Import drop zone */}
+      {/* Media picker */}
       <div className="m-2 border border-dashed border-border rounded-lg p-4 flex flex-col items-center gap-1 text-center hover:border-accent/50 hover:bg-accent-dim transition-colors cursor-pointer group" onClick={() => void importMedia()}>
         <FolderOpen size={18} className="text-text-dim group-hover:text-accent transition-colors" />
-        <span className="text-2xs text-text-dim group-hover:text-text-secondary">Drop media here</span>
+        <span className="text-2xs text-text-dim group-hover:text-text-secondary">Select media</span>
       </div>
     </div>
   )

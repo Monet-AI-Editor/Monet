@@ -1,4 +1,12 @@
 export type MediaType = 'video' | 'audio' | 'image'
+export type TransitionType = 'crossfade' | 'dip_to_black' | 'wipe' | 'slide'
+
+export interface Transition {
+  id: string
+  type: TransitionType
+  duration: number
+  parameters: Record<string, number | string | boolean>
+}
 
 export interface MediaAsset {
   id: string
@@ -84,6 +92,8 @@ export interface TimelineClip {
   color: string
   effects: ClipEffect[]
   volume: number
+  transitionIn?: Transition
+  transitionOut?: Transition
 }
 
 export interface Track {

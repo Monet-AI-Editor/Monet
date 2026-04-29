@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize2, Scissors } from 'lucide-react'
 import clsx from 'clsx'
 import type { EditorState, EditorActions } from '../store/useEditorStore'
-import type { MediaAsset, TimelineClip } from '../types'
+import type { MediaAsset, TimelineClip, Transition } from '../types'
 
 type Props = Pick<EditorState, 'isPlaying' | 'playheadTime' | 'totalDuration' | 'selectedClipId' | 'selectedAssetId' | 'assets' | 'tracks' | 'activeSequenceWidth' | 'activeSequenceHeight'> &
   Pick<EditorActions, 'setIsPlaying' | 'setPlayheadTime' | 'splitSelectedClip'>
@@ -109,6 +109,60 @@ type ActivePreviewLayer = {
   asset: MediaAsset
   clipLocalTime: number
   videoFileTime: number
+  opacityMultiplier?: number
+  audioGain?: number
+}
+
+type PreviewTrackLayer = ActivePreviewLayer & {
+  trackIndex: number
+  isVisible: boolean
+}
+
+type ClipTransitionWindow = {
+  transition: Transition
+  startTime: number
+  endTime: number
+  fromClipId: string
+  toClipId: string
+}
+
+function getClipEndTime(clip: TimelineClip): number {
+  return clip.startTime + clip.duration
+}
+
+function getEffectiveTransition(previousClip: TimelineClip | undefined, nextClip: TimelineClip | undefined, previousAsset?: MediaAsset): ClipTransitionWindow | null {
+  if (!previousClip || !nextClip) return null
+  const boundaryTime = nextClip.startTime
+  const gap = Math.abs(getClipEndTime(previousClip) - boundaryTime)
+  if (gap > 0.05) return null
+
+  const transition = nextClip.transitionIn ?? previousClip.transitionOut
+  if (!transition) return null
+
+  const availablePreviousTail = Math.max(
+    0,
+    (previousAsset?.duration ?? getClipEndTime(previousClip) + transition.duration) - (previousClip.inPoint + previousClip.duration)
+  )
+  const duration = Math.max(
+    0,
+    Math.min(
+      transition.duration,
+      nextClip.duration,
+      availablePreviousTail > 0 ? availablePreviousTail : transition.duration
+    )
+  )
+  if (duration <= 0.001) return null
+
+  return {
+    transition: {
+      ...transition,
+      duration
+    },
+    startTime: boundaryTime,
+    endTime: boundaryTime + duration,
+    fromClipId: previousClip.id,
+    toClipId: nextClip.id
+  }
 }
 
 function PreviewLayer({
@@ -118,6 +172,7 @@ function PreviewLayer({
   audioMuted,
   canvasWidth,
   canvasHeight,
+  hidden = false,
   onTogglePlay,
   registerVideoRef
 }: {
@@ -127,6 +182,7 @@ function PreviewLayer({
   audioMuted: boolean
   canvasWidth: number
   canvasHeight: number
+  hidden?: boolean
   onTogglePlay: () => void
   registerVideoRef: (clipId: string, node: HTMLVideoElement | null) => void
 }) {
@@ -186,6 +242,7 @@ function PreviewLayer({
   const rotation = Number(resolvedTransform.rotation ?? 0)
   const blendMode = String(resolvedBlendMode.mode ?? 'normal') as React.CSSProperties['mixBlendMode']
   videoOpacity *= Math.max(0, Math.min(1, Number(resolvedOpacity.opacity ?? 1)))
+  videoOpacity *= Math.max(0, Math.min(1, layer.opacityMultiplier ?? 1))
 
   const textOverlayText = String(resolvedTextOverlay.text ?? '').trim()
   const textOverlayX = Number(resolvedTextOverlay.x ?? 0)
@@ -252,14 +309,16 @@ function PreviewLayer({
     <div
       className="absolute inset-0 flex items-center justify-center"
       style={{
-        opacity: videoOpacity,
+        opacity: hidden ? 0 : videoOpacity,
         filter: filterParts.join(' ') || undefined,
         transform: `translate(${transformX}px, ${transformY}px) rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`,
         mixBlendMode: blendMode,
         transformOrigin: 'center center',
         clipPath,
         backgroundColor: backgroundFillEffect ? backgroundFillColor : undefined,
-        backgroundImage: gradientFillEffect ? gradientFillCss : undefined
+        backgroundImage: gradientFillEffect ? gradientFillCss : undefined,
+        pointerEvents: hidden ? 'none' : undefined,
+        visibility: hidden ? 'hidden' : undefined
       }}
     >
       {layer.asset.type === 'video' && assetUrl ? (
@@ -376,6 +435,85 @@ export function PreviewMonitor({
   const getPreviewCacheKey = (previewAsset: Pick<MediaAsset, 'path' | 'type'>) => `${previewAsset.type}:${previewAsset.path}`
   const isPlayheadInsideClip = (clip: { startTime: number; duration: number }, time: number) =>
     time >= clip.startTime && time < clip.startTime + clip.duration
+  const buildTrackPreviewLayers = (kind: 'video' | 'audio'): PreviewTrackLayer[] => {
+    const assetMap = new Map(assets.map((asset) => [asset.id, asset]))
+
+    return tracks
+      .filter((track) => track.type === kind)
+      .flatMap((track, trackIndex) => {
+        const sortedClips = [...track.clips].sort((left, right) => left.startTime - right.startTime)
+        const activeClipIndex = sortedClips.findIndex((candidate) => isPlayheadInsideClip(candidate, playheadTime))
+        const activeClip = activeClipIndex >= 0 ? sortedClips[activeClipIndex] : null
+        const previousClip = activeClipIndex > 0 ? sortedClips[activeClipIndex - 1] : null
+        const nextClip = activeClipIndex >= 0 && activeClipIndex < sortedClips.length - 1 ? sortedClips[activeClipIndex + 1] : null
+        const previousAsset = previousClip ? assetMap.get(previousClip.assetId) : undefined
+        const outgoingTransition = activeClip ? getEffectiveTransition(previousClip ?? undefined, activeClip, previousAsset) : null
+        const inOutgoingWindow =
+          Boolean(outgoingTransition) &&
+          playheadTime >= (outgoingTransition?.startTime ?? 0) &&
+          playheadTime < (outgoingTransition?.endTime ?? 0)
+        const transitionProgress = outgoingTransition
+          ? Math.max(
+              0,
+              Math.min(
+                1,
+                (playheadTime - outgoingTransition.startTime) / Math.max(0.0001, outgoingTransition.transition.duration)
+              )
+            )
+          : 0
+
+        const layers: Array<PreviewTrackLayer | null> = []
+
+        if (activeClip) {
+          const asset = assetMap.get(activeClip.assetId)
+          if (asset) {
+            layers.push({
+              clip: activeClip,
+              asset,
+              clipLocalTime: Math.max(0, playheadTime - activeClip.startTime),
+              videoFileTime: activeClip.inPoint + Math.max(0, playheadTime - activeClip.startTime),
+              opacityMultiplier: inOutgoingWindow ? transitionProgress : 1,
+              audioGain: inOutgoingWindow ? transitionProgress : 1,
+              trackIndex,
+              isVisible: true
+            })
+          }
+        }
+
+        if (activeClip && previousClip && previousAsset && outgoingTransition && inOutgoingWindow) {
+          const tailOffset = playheadTime - outgoingTransition.startTime
+          layers.push({
+            clip: previousClip,
+            asset: previousAsset,
+            clipLocalTime: previousClip.duration + tailOffset,
+            videoFileTime: previousClip.inPoint + previousClip.duration + tailOffset,
+            opacityMultiplier: 1 - transitionProgress,
+            audioGain: 1 - transitionProgress,
+            trackIndex,
+            isVisible: true
+          })
+        }
+
+        if (nextClip) {
+          const asset = assetMap.get(nextClip.assetId)
+          if (asset) {
+            layers.push({
+              clip: nextClip,
+              asset,
+              clipLocalTime: 0,
+              videoFileTime: nextClip.inPoint,
+              trackIndex,
+              isVisible: false
+            })
+          }
+        }
+
+        return layers
+          .filter((layer): layer is PreviewTrackLayer => Boolean(layer))
+
+      })
+      .sort((left, right) => left.trackIndex - right.trackIndex)
+  }
 
   const videoClips = useMemo(
     () =>
@@ -400,55 +538,28 @@ export function PreviewMonitor({
   const playheadClip =
     previewClips.find((clip) => isPlayheadInsideClip(clip, playheadTime)) ?? null
   const previewClip = playheadClip ?? selectedClip
+  const previewVideoTrackLayers = useMemo(
+    () => buildTrackPreviewLayers('video'),
+    [assets, playheadTime, tracks]
+  )
   const activeVideoLayers = useMemo(
-    () =>
-      tracks
-        .filter((track) => track.type === 'video')
-        .map((track, trackIndex) => {
-          const clip = track.clips.find((candidate) => isPlayheadInsideClip(candidate, playheadTime))
-          if (!clip) return null
-          const asset = assets.find((candidate) => candidate.id === clip.assetId)
-          if (!asset) return null
-          const clipLocalTime = Math.max(0, Math.min(clip.duration, playheadTime - clip.startTime))
-          return {
-            clip,
-            asset,
-            clipLocalTime,
-            videoFileTime: clip.inPoint + clipLocalTime,
-            trackIndex
-          }
-        })
-        .filter((layer): layer is ActivePreviewLayer & { trackIndex: number } => Boolean(layer))
-        .sort((left, right) => left.trackIndex - right.trackIndex)
-        .map(({ trackIndex: _trackIndex, ...layer }) => layer),
+    () => previewVideoTrackLayers.filter((layer) => layer.isVisible).map(({ trackIndex: _trackIndex, isVisible: _isVisible, ...layer }) => layer),
+    [previewVideoTrackLayers]
+  )
+  const previewAudioTrackLayers = useMemo(
+    () => buildTrackPreviewLayers('audio'),
     [assets, playheadTime, tracks]
   )
   const activeAudioLayers = useMemo(
-    () =>
-      tracks
-        .filter((track) => track.type === 'audio')
-        .map((track, trackIndex) => {
-          const clip = track.clips.find((candidate) => isPlayheadInsideClip(candidate, playheadTime))
-          if (!clip) return null
-          const asset = assets.find((candidate) => candidate.id === clip.assetId)
-          if (!asset) return null
-          const clipLocalTime = Math.max(0, Math.min(clip.duration, playheadTime - clip.startTime))
-          return {
-            clip,
-            asset,
-            clipLocalTime,
-            videoFileTime: clip.inPoint + clipLocalTime,
-            trackIndex
-          }
-        })
-        .filter((layer): layer is ActivePreviewLayer & { trackIndex: number } => Boolean(layer))
-        .sort((left, right) => left.trackIndex - right.trackIndex)
-        .map(({ trackIndex: _trackIndex, ...layer }) => layer),
-    [assets, playheadTime, tracks]
+    () => previewAudioTrackLayers.filter((layer) => layer.isVisible).map(({ trackIndex: _trackIndex, isVisible: _isVisible, ...layer }) => layer),
+    [previewAudioTrackLayers]
   )
   const timelineAsset = previewClip ? assets.find((candidate) => candidate.id === previewClip.assetId) : undefined
   const shouldPreferSelectedAsset = Boolean(selectedAsset && selectedAsset.id !== timelineAsset?.id && !playheadClip)
   const renderedVideoLayers = shouldPreferSelectedAsset ? [] : activeVideoLayers
+  const preloadedVideoLayers = shouldPreferSelectedAsset
+    ? []
+    : previewVideoTrackLayers.filter((layer) => !layer.isVisible)
   const standaloneSelectedAudioLayer = useMemo<ActivePreviewLayer | null>(() => {
     if (!shouldPreferSelectedAsset || !selectedAsset || selectedAsset.type !== 'audio') return null
     const duration = Math.max(0, selectedAsset.duration ?? totalDuration ?? 0)
@@ -477,6 +588,9 @@ export function PreviewMonitor({
     : standaloneSelectedAudioLayer
       ? [standaloneSelectedAudioLayer]
       : []
+  const preloadedAudioLayers = activeAudioLayers.length > 0
+    ? previewAudioTrackLayers.filter((layer) => !layer.isVisible).map(({ trackIndex: _trackIndex, isVisible: _isVisible, ...layer }) => layer)
+    : []
   const activeVideoLayerKey = useMemo(
     () => activeVideoLayers.map((layer) => layer.clip.id).join('|'),
     [activeVideoLayers]
@@ -494,12 +608,18 @@ export function PreviewMonitor({
         ...renderedVideoLayers
           .filter((layer) => Boolean(layer.asset.path))
           .map((layer) => [layer.asset.id, layer.asset] as const),
+        ...preloadedVideoLayers
+          .filter((layer) => Boolean(layer.asset.path))
+          .map((layer) => [layer.asset.id, layer.asset] as const),
         ...renderedAudioLayers
+          .filter((layer) => Boolean(layer.asset.path))
+          .map((layer) => [layer.asset.id, layer.asset] as const),
+        ...preloadedAudioLayers
           .filter((layer) => Boolean(layer.asset.path))
           .map((layer) => [layer.asset.id, layer.asset] as const),
         ...(asset?.path ? [[asset.id, asset] as const] : [])
       ]).values()],
-    [renderedAudioLayers, renderedVideoLayers, asset]
+    [preloadedAudioLayers, preloadedVideoLayers, renderedAudioLayers, renderedVideoLayers, asset]
   )
   const previewAssetKey = useMemo(
     () => previewAssets.map((previewAsset) => getPreviewCacheKey(previewAsset)).join('|'),
@@ -682,7 +802,7 @@ export function PreviewMonitor({
       if (!audio) continue
       const desiredTime = layer.videoFileTime
       const sync = () => {
-        audio.volume = Math.max(0, Math.min(1, layer.clip.volume ?? 1))
+        audio.volume = Math.max(0, Math.min(1, (layer.clip.volume ?? 1) * (layer.audioGain ?? 1)))
         if (Math.abs(audio.currentTime - desiredTime) > 0.05) {
           audio.currentTime = desiredTime
         }
@@ -762,7 +882,7 @@ export function PreviewMonitor({
     for (const layer of renderedAudioLayersRef.current) {
       const audio = layerAudioRefs.current[layer.clip.id]
       if (!audio) continue
-      audio.volume = Math.max(0, Math.min(1, layer.clip.volume ?? 1))
+      audio.volume = Math.max(0, Math.min(1, (layer.clip.volume ?? 1) * (layer.audioGain ?? 1)))
       const desiredTime = layer.videoFileTime
       if (force || Math.abs(audio.currentTime - desiredTime) > 0.05) {
         audio.currentTime = desiredTime
@@ -776,7 +896,7 @@ export function PreviewMonitor({
     for (const layer of renderedAudioLayersRef.current) {
       const audio = layerAudioRefs.current[layer.clip.id]
       if (!audio) continue
-      audio.volume = Math.max(0, Math.min(1, layer.clip.volume ?? 1))
+      audio.volume = Math.max(0, Math.min(1, (layer.clip.volume ?? 1) * (layer.audioGain ?? 1)))
       const desiredTime = layer.videoFileTime
 
       const startPlayback = () => {
@@ -826,7 +946,10 @@ export function PreviewMonitor({
 
   // --- Prune stale video refs on clip/project changes ---
   useEffect(() => {
-    const activeClipIds = new Set(activeVideoLayers.map((layer) => layer.clip.id))
+    const activeClipIds = new Set([
+      ...activeVideoLayers.map((layer) => layer.clip.id),
+      ...preloadedVideoLayers.map((layer) => layer.clip.id)
+    ])
     for (const [clipId, video] of Object.entries(layerVideoRefs.current)) {
       if (activeClipIds.has(clipId)) continue
       if (video) {
@@ -835,10 +958,13 @@ export function PreviewMonitor({
       }
       delete layerVideoRefs.current[clipId]
     }
-  }, [activeVideoLayers])
+  }, [activeVideoLayers, preloadedVideoLayers])
 
   useEffect(() => {
-    const activeClipIds = new Set(renderedAudioLayers.map((layer) => layer.clip.id))
+    const activeClipIds = new Set([
+      ...renderedAudioLayers.map((layer) => layer.clip.id),
+      ...preloadedAudioLayers.map((layer) => layer.clip.id)
+    ])
     for (const [clipId, audio] of Object.entries(layerAudioRefs.current)) {
       if (activeClipIds.has(clipId)) continue
       if (audio) {
@@ -847,7 +973,7 @@ export function PreviewMonitor({
       }
       delete layerAudioRefs.current[clipId]
     }
-  }, [renderedAudioLayers])
+  }, [preloadedAudioLayers, renderedAudioLayers])
 
   // --- Play / pause ---
   useEffect(() => {
@@ -1013,8 +1139,8 @@ export function PreviewMonitor({
       <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden min-h-0">
         <div className="relative flex h-full w-full items-center justify-center p-4">
           <div className="relative overflow-hidden bg-black border border-white/6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]" style={stageStyle}>
-            {renderedVideoLayers.length > 0 ? (
-              renderedVideoLayers.map((layer, index) => {
+            {renderedVideoLayers.length > 0 || preloadedVideoLayers.length > 0 ? (
+              [...renderedVideoLayers.map((layer) => ({ layer, hidden: false })), ...preloadedVideoLayers.map((layer) => ({ layer, hidden: true }))].map(({ layer, hidden }, index) => {
                 const layerPreviewKey = getPreviewCacheKey(layer.asset)
                 const layerAssetUrl = resolvedPreviewPaths[layerPreviewKey]
                   ? `${window.api.toFileUrl(resolvedPreviewPaths[layerPreviewKey].path)}&v=${encodeURIComponent(resolvedPreviewPaths[layerPreviewKey].cacheKey)}`
@@ -1025,14 +1151,15 @@ export function PreviewMonitor({
                     key={layer.clip.id}
                     layer={layer}
                     assetUrl={layerAssetUrl}
-                    muted={muted || renderedAudioLayers.length > 0}
-                    audioMuted={true}
+                    muted={hidden || muted || renderedAudioLayers.length > 0}
+                    audioMuted={hidden || true}
                     canvasWidth={canvasWidth}
                     canvasHeight={canvasHeight}
+                    hidden={hidden}
                     onTogglePlay={() => setIsPlaying(!isPlaying)}
                     registerVideoRef={(clipId, node) => {
                       layerVideoRefs.current[clipId] = node
-                      if (index === 0) videoRef.current = node
+                      if (!hidden && index === 0) videoRef.current = node
                     }}
                   />
                 ) : (
@@ -1066,7 +1193,7 @@ export function PreviewMonitor({
                 </div>
               </div>
             )}
-            {renderedAudioLayers.map((layer) => {
+            {[...renderedAudioLayers, ...preloadedAudioLayers].map((layer) => {
               const layerPreviewKey = getPreviewCacheKey(layer.asset)
               const layerAssetUrl = resolvedPreviewPaths[layerPreviewKey]
                 ? `${window.api.toFileUrl(resolvedPreviewPaths[layerPreviewKey].path)}&v=${encodeURIComponent(resolvedPreviewPaths[layerPreviewKey].cacheKey)}`

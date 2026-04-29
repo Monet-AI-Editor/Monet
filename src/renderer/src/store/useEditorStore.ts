@@ -69,6 +69,18 @@ type BackendProject = {
         startTime: number
         duration: number
         inPoint: number
+        transitionIn?: {
+          id: string
+          type: 'crossfade' | 'dip_to_black' | 'wipe' | 'slide'
+          duration: number
+          parameters: Record<string, number | string | boolean>
+        }
+        transitionOut?: {
+          id: string
+          type: 'crossfade' | 'dip_to_black' | 'wipe' | 'slide'
+          duration: number
+          parameters: Record<string, number | string | boolean>
+        }
         effects?: Array<{
           id: string
           type: string
@@ -171,7 +183,9 @@ function mapProject(project: BackendProject) {
             ...effect,
             keyframes: effect.keyframes ?? []
           })),
-          volume: clip.volume ?? 1
+          volume: clip.volume ?? 1,
+          transitionIn: clip.transitionIn,
+          transitionOut: clip.transitionOut
         }
       })
     })) ?? []

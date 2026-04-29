@@ -4,6 +4,7 @@ import { basename, join } from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import type { ExtractedFrame, MediaAssetRecord } from '../../shared/editor.js'
+import { resolveFfmpegBinary } from './media-binaries'
 
 const execFileAsync = promisify(execFile)
 const MAX_FRAMES = 16
@@ -37,7 +38,7 @@ export class FrameExtractionService {
     for (let index = 0; index < sampleTimes.length; index += 1) {
       const time = sampleTimes[index]
       const framePath = join(outputDir, `${baseName}-${index + 1}.jpg`)
-      await execFileAsync('ffmpeg', [
+      await execFileAsync(resolveFfmpegBinary(), [
         '-y',
         '-ss', `${time}`,
         '-i', asset.path,
@@ -78,7 +79,7 @@ export class FrameExtractionService {
     const filterComplex = `${frameFilters.join(';')};${stackInputs}xstack=inputs=${frames.length}:layout=${layout}:fill=0x111111[sheet]`
 
     await execFileAsync(
-      'ffmpeg',
+      resolveFfmpegBinary(),
       [
         '-y',
         ...inputs,

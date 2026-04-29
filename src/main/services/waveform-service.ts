@@ -1,5 +1,6 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { resolveFfmpegBinary } from './media-binaries'
 
 const execFileAsync = promisify(execFile)
 const MAX_BUFFER_BYTES = 128 * 1024 * 1024
@@ -34,7 +35,7 @@ export class WaveformService {
 
   private async generateWaveform(filePath: string, sampleCount: number): Promise<number[]> {
     const { stdout } = await execFileAsync(
-      'ffmpeg',
+      resolveFfmpegBinary(),
       [
         '-v',
         'error',

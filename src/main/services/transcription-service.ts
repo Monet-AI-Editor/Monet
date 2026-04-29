@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 import { tmpdir } from 'os'
 import OpenAI from 'openai'
 import type { TranscriptSegment } from '../../shared/editor.js'
+import { resolveFfmpegBinary } from './media-binaries.js'
 
 const SERVICE_DIR = dirname(fileURLToPath(import.meta.url))
 const CWD_ROOT = process.cwd()
@@ -152,7 +153,7 @@ export class TranscriptionService {
   private async extractAudioForLocalTranscription(inputPath: string, outputPath: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       execFile(
-        'ffmpeg',
+        resolveFfmpegBinary(),
         [
           '-y',
           '-i', inputPath,

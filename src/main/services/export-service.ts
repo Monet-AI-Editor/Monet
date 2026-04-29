@@ -1,8 +1,6 @@
 import { execFile, spawn } from 'child_process'
-import { existsSync } from 'fs'
 import { mkdtemp, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
 import { promisify } from 'util'
 import type {
   Effect,
@@ -11,11 +9,13 @@ import type {
   ExportResult,
   MediaAssetRecord,
   SequenceRecord,
+  TransitionType,
   TimelineClipRecord,
   TimelineTrackRecord
 } from '../../shared/editor'
 import { ProjectStore } from './project-store'
 import { EffectsService } from './effects-service'
+import { resolveFfmpegBinary } from './media-binaries'
 
 const execFileAsync = promisify(execFile)
 
@@ -34,35 +34,6 @@ const QUALITY_PRESETS: Record<ExportOptions['quality'], { crf: number; preset: s
 const EXPORT_REFERENCE_SIZE = {
   width: 1920,
   height: 1080
-}
-
-let resolvedFfmpegBinary: string | null = null
-
-function resolveFfmpegBinary(): string {
-  if (resolvedFfmpegBinary) return resolvedFfmpegBinary
-
-  const pathEntries = (process.env.PATH ?? '')
-    .split(':')
-    .filter(Boolean)
-
-  const candidates = [
-    'ffmpeg',
-    ...pathEntries.map((entry) => join(entry, 'ffmpeg')),
-    '/opt/homebrew/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    '/usr/bin/ffmpeg'
-  ]
-
-  for (const candidate of candidates) {
-    if (candidate === 'ffmpeg') continue
-    if (existsSync(candidate)) {
-      resolvedFfmpegBinary = candidate
-      return candidate
-    }
-  }
-
-  resolvedFfmpegBinary = 'ffmpeg'
-  return resolvedFfmpegBinary
 }
 
 type CanvasSize = {
@@ -485,6 +456,13 @@ type ActiveTrackClip = {
   asset: MediaAssetRecord
   track: TimelineTrackRecord
   trackIndex: number
+  transition?: {
+    type: TransitionType
+    duration: number
+    role: 'incoming' | 'outgoing'
+    progressAtIntervalStart: number
+  }
+  sourceOffset: number
 }
 
 type TimelineInterval = {
@@ -501,31 +479,117 @@ function getAsset(project: EditorProjectRecord, assetId: string): MediaAssetReco
   return asset
 }
 
-function findActiveTrackClip(
+function getClipEndTimeRecord(clip: TimelineClipRecord): number {
+  return clip.startTime + clip.duration
+}
+
+function getEffectiveTransitionRecord(
+  previousClip: TimelineClipRecord | undefined,
+  nextClip: TimelineClipRecord | undefined,
+  previousAsset: MediaAssetRecord | undefined
+): { type: TransitionType; duration: number; startTime: number; endTime: number } | null {
+  if (!previousClip || !nextClip) return null
+  const gap = Math.abs(getClipEndTimeRecord(previousClip) - nextClip.startTime)
+  if (gap > 0.05) return null
+
+  const transition = nextClip.transitionIn ?? previousClip.transitionOut
+  if (!transition) return null
+
+  const availablePreviousTail = Math.max(
+    0,
+    (previousAsset?.duration ?? previousClip.inPoint + previousClip.duration + transition.duration) - (previousClip.inPoint + previousClip.duration)
+  )
+  const duration = Math.max(
+    0,
+    Math.min(
+      transition.duration,
+      nextClip.duration,
+      availablePreviousTail > 0 ? availablePreviousTail : transition.duration
+    )
+  )
+  if (duration <= 0.001) return null
+
+  return {
+    type: transition.type,
+    duration,
+    startTime: nextClip.startTime,
+    endTime: nextClip.startTime + duration
+  }
+}
+
+function findActiveTrackClips(
   track: TimelineTrackRecord,
   assetLookup: Map<string, MediaAssetRecord>,
   time: number,
   trackIndex: number
-): ActiveTrackClip | null {
-  const clip = track.clips.find((candidate) => time >= candidate.startTime && time < candidate.startTime + candidate.duration - 0.0001)
-  if (!clip) return null
-  const asset = assetLookup.get(clip.assetId)
-  if (!asset) return null
-  return { clip, asset, track, trackIndex }
+): ActiveTrackClip[] {
+  const sortedClips = [...track.clips].sort((left, right) => left.startTime - right.startTime)
+  const activeClipIndex = sortedClips.findIndex((candidate) => time >= candidate.startTime && time < candidate.startTime + candidate.duration - 0.0001)
+  if (activeClipIndex < 0) return []
+
+  const activeClip = sortedClips[activeClipIndex]
+  const activeAsset = assetLookup.get(activeClip.assetId)
+  if (!activeAsset) return []
+
+  const layers: ActiveTrackClip[] = [{
+    clip: activeClip,
+    asset: activeAsset,
+    track,
+    trackIndex,
+    sourceOffset: Math.max(0, time - activeClip.startTime)
+  }]
+
+  const previousClip = activeClipIndex > 0 ? sortedClips[activeClipIndex - 1] : undefined
+  const previousAsset = previousClip ? assetLookup.get(previousClip.assetId) : undefined
+  const transition = getEffectiveTransitionRecord(previousClip, activeClip, previousAsset)
+
+  if (previousClip && previousAsset && transition && time >= transition.startTime && time < transition.endTime) {
+    const progress = Math.max(0, Math.min(1, (time - transition.startTime) / Math.max(0.0001, transition.duration)))
+    layers[0].transition = {
+      type: transition.type,
+      duration: transition.duration,
+      role: 'incoming',
+      progressAtIntervalStart: progress
+    }
+    layers.push({
+      clip: previousClip,
+      asset: previousAsset,
+      track,
+      trackIndex,
+      sourceOffset: previousClip.duration + (time - transition.startTime),
+      transition: {
+        type: transition.type,
+        duration: transition.duration,
+        role: 'outgoing',
+        progressAtIntervalStart: progress
+      }
+    })
+  }
+
+  return layers
 }
 
 function buildTimelineIntervals(project: EditorProjectRecord, sequence: SequenceRecord): TimelineInterval[] {
   const times = new Set<number>([0, sequence.duration])
+  const assetLookup = new Map(project.assets.map((asset) => [asset.id, asset]))
   for (const track of sequence.tracks) {
     if (track.kind !== 'video' && track.kind !== 'audio') continue
-    for (const clip of track.clips) {
+    const sortedClips = [...track.clips].sort((left, right) => left.startTime - right.startTime)
+    for (let index = 0; index < sortedClips.length; index += 1) {
+      const clip = sortedClips[index]
       times.add(Number(clip.startTime.toFixed(6)))
       times.add(Number((clip.startTime + clip.duration).toFixed(6)))
+      const nextClip = sortedClips[index + 1]
+      const previousAsset = assetLookup.get(clip.assetId)
+      const transition = getEffectiveTransitionRecord(clip, nextClip, previousAsset)
+      if (transition) {
+        times.add(Number(transition.startTime.toFixed(6)))
+        times.add(Number(transition.endTime.toFixed(6)))
+      }
     }
   }
 
   const sortedTimes = [...times].sort((left, right) => left - right)
-  const assetLookup = new Map(project.assets.map((asset) => [asset.id, asset]))
   const intervals: TimelineInterval[] = []
 
   for (let index = 0; index < sortedTimes.length - 1; index += 1) {
@@ -535,16 +599,14 @@ function buildTimelineIntervals(project: EditorProjectRecord, sequence: Sequence
     if (duration <= 0.01) continue
 
     const videoLayers = sequence.tracks
-      .map((track, trackIndex) =>
-        track.kind === 'video' ? findActiveTrackClip(track, assetLookup, start, trackIndex) : null
+      .flatMap((track, trackIndex) =>
+        track.kind === 'video' ? findActiveTrackClips(track, assetLookup, start, trackIndex) : []
       )
-      .filter((item): item is ActiveTrackClip => Boolean(item))
 
     const audioLayers = sequence.tracks
-      .map((track, trackIndex) =>
-        track.kind === 'audio' ? findActiveTrackClip(track, assetLookup, start, trackIndex) : null
+      .flatMap((track, trackIndex) =>
+        track.kind === 'audio' ? findActiveTrackClips(track, assetLookup, start, trackIndex) : []
       )
-      .filter((item): item is ActiveTrackClip => Boolean(item))
 
     if (videoLayers.length === 0 && audioLayers.length === 0) continue
 
@@ -880,11 +942,17 @@ function buildLayerCanvasFilter(
     Number(backgroundFillEffect?.parameters.opacity ?? 1),
     '#000000'
   )
+  const transitionAlphaFilters: string[] = []
+  if (clipLocalOffset >= clip.duration && clip.transitionOut) {
+    transitionAlphaFilters.push(`fade=t=out:st=0:d=${duration}:alpha=1`)
+  } else if (clipLocalOffset === 0 && clip.transitionIn) {
+    transitionAlphaFilters.push(`fade=t=in:st=0:d=${duration}:alpha=1`)
+  }
 
   const lines = [
     `${inputLabel}${effectsService.combineFilters(baseFilters)},format=rgba${chromaKeyEffect ? `,colorkey=${chromaColor}:${chromaSimilarity}:${chromaBlend}` : ''}[src${layerIndex}]`,
     `color=c=${backgroundFillEffect ? backgroundFillColor : 'black@0'}:s=${width}x${height}:r=24:d=${duration},format=rgba[blank${layerIndex}]`,
-    `[src${layerIndex}]scale=w='max(2,trunc(iw*(${scaleXExpr})/2)*2)':h='max(2,trunc(ih*(${scaleYExpr})/2)*2)':eval=frame,rotate='(${rotationExpr})*PI/180':c=black@0:ow=rotw(iw):oh=roth(ih)${alphaFilters.length > 0 ? `,${alphaFilters.join(',')}` : ''}[fg${layerIndex}]`,
+    `[src${layerIndex}]scale=w='max(2,trunc(iw*(${scaleXExpr})/2)*2)':h='max(2,trunc(ih*(${scaleYExpr})/2)*2)':eval=frame,rotate='(${rotationExpr})*PI/180':c=black@0:ow=rotw(iw):oh=roth(ih)${alphaFilters.length > 0 ? `,${alphaFilters.join(',')}` : ''}${transitionAlphaFilters.length > 0 ? `,${transitionAlphaFilters.join(',')}` : ''}[fg${layerIndex}]`,
   ]
 
   let baseCanvasLabel = `blank${layerIndex}`
@@ -1027,7 +1095,7 @@ async function createCompositeSegment(
   const sortedVideoLayers = [...interval.videoLayers].sort((left, right) => left.trackIndex - right.trackIndex)
   for (let layerIndex = 0; layerIndex < sortedVideoLayers.length; layerIndex += 1) {
     const layer = sortedVideoLayers[layerIndex]
-    const clipOffset = interval.start - layer.clip.startTime
+    const clipOffset = layer.sourceOffset
     if (layer.asset.type === 'image') {
       args.push('-loop', '1', '-t', `${interval.duration}`, '-i', layer.asset.path)
     } else {
@@ -1053,7 +1121,7 @@ async function createCompositeSegment(
   const effectiveAudioLayers = interval.audioLayers
 
   for (const [audioIndex, layer] of effectiveAudioLayers.entries()) {
-    const clipOffset = interval.start - layer.clip.startTime
+    const clipOffset = layer.sourceOffset
     args.push('-ss', `${layer.clip.inPoint + clipOffset}`, '-t', `${interval.duration}`, '-i', layer.asset.path)
     const filters: string[] = []
     if (layer.clip.speed && layer.clip.speed !== 1.0) {
@@ -1070,6 +1138,13 @@ async function createCompositeSegment(
     }
     if (layer.clip.volume !== undefined && layer.clip.volume !== 1.0) {
       filters.push(`volume=${Math.max(0, Math.min(4, layer.clip.volume))}`)
+    }
+    if (layer.transition) {
+      if (layer.transition.role === 'incoming') {
+        filters.push(`afade=t=in:st=0:d=${interval.duration}`)
+      } else {
+        filters.push(`afade=t=out:st=0:d=${interval.duration}`)
+      }
     }
     const audioLabel = `aud${audioIndex}`
     filterLines.push(
