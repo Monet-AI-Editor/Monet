@@ -4,6 +4,11 @@ import { join } from 'path'
 let resolvedFfmpegBinary: string | null = null
 let resolvedFfprobeBinary: string | null = null
 
+export function resetResolvedMediaBinaryCache(): void {
+  resolvedFfmpegBinary = null
+  resolvedFfprobeBinary = null
+}
+
 function resolveBinary(binaryName: 'ffmpeg' | 'ffprobe'): string {
   const pathEntries = (process.env.PATH ?? '')
     .split(':')

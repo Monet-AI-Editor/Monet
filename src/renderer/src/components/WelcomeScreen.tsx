@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { ChevronRight, Clock, FilePlus2, FolderOpen, KeyRound, RefreshCw, RotateCcw, TerminalSquare } from 'lucide-react'
 import clsx from 'clsx'
 import type { EditorActions, EditorState } from '../store/useEditorStore'
 import type { AppUpdateState } from '../types'
+import { getHasRecoverableWorkspace, getWelcomeTagline } from './welcome-screen-state'
 
 type Props = Pick<EditorState, 'projectManager'> &
   Pick<EditorState, 'projectName' | 'projectFilePath' | 'assets' | 'sequences' | 'aiSettings'> &
@@ -47,13 +48,13 @@ export function WelcomeScreen({
   const [analyticsChoice, setAnalyticsChoice] = useState<AnalyticsChoice>(null)
   const [savingSetup, setSavingSetup] = useState(false)
 
-  const hasRecoverableWorkspace =
-    !loading && (
-      Boolean(projectFilePath) ||
-      assets.length > 0 ||
-      sequences.length > 1 ||
-      (sequences[0]?.duration ?? 0) > 0
-    )
+  const hasRecoverableWorkspace = getHasRecoverableWorkspace({
+    loading,
+    projectFilePath,
+    assetCount: assets.length,
+    sequenceCount: sequences.length,
+    firstSequenceDuration: sequences[0]?.duration ?? 0
+  })
 
   const recent = loading ? [] : projectManager.recentProjects.slice(0, 5)
   const sessionName = projectFilePath ? projectName : 'Recovered Session'
@@ -112,7 +113,7 @@ export function WelcomeScreen({
           <div className="mb-6 text-center">
             <div className="text-2xl font-semibold tracking-tight text-white">Monet</div>
             <div className="mt-1.5 text-xs text-white/40">
-              {showOnboarding ? 'Set up Monet once, then edit with AI.' : 'Edit faster with AI-native video workflows.'}
+              {getWelcomeTagline(showOnboarding)}
             </div>
           </div>
 

@@ -17,6 +17,7 @@ import type {
   ToolDefinition,
   Track
 } from '../types'
+import { runExportSequenceFlow } from './export-flow'
 
 type BackendProject = {
   name: string
@@ -699,52 +700,25 @@ export function useEditorStore(): EditorState & EditorActions {
   }, [applyBootstrapMeta, applyProject, persistAISettings])
 
   const exportSequence = useCallback(async (options: ExportOptions) => {
-    setLastError(null)
-    clearExportToast()
-    setExportStatus('running')
-    setExportMessage('Choose where to save the export.')
-    setExportProgress(0)
-
-    try {
-      const baseName = projectName.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'monet-export'
-      const outputPath = await window.api.saveExportFile(`${baseName}.${options.format}`)
-      if (!outputPath) return false
-
-      setExportMessage(`Rendering ${options.resolution} ${options.format.toUpperCase()} export…`)
-
-      const result = await window.api.exportActiveSequence(outputPath, options) as ExportResult
-      showExportToast(result.outputPath)
-      setExportMessage('Finalizing export…')
-      setMessages((current) => [
-        ...current,
-        {
-          id: createClientId('msg'),
-          role: 'assistant',
-          content: `Exported ${result.sequenceName} to ${result.outputPath} (${options.resolution}, ${options.quality}, ${options.format})`,
-          timestamp: Date.now(),
-          status: 'done'
-        }
-      ])
-      return true
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Export failed.'
-      setLastError(message)
-      setMessages((current) => [
-        ...current,
-        {
-          id: createClientId('msg'),
-          role: 'assistant',
-          content: message,
-          timestamp: Date.now(),
-          status: 'error'
-        }
-      ])
-      return false
-    } finally {
-      setExportStatus('idle')
-      setExportMessage(null)
-      setExportProgress(null)
-    }
+    return runExportSequenceFlow({
+      api: {
+        saveExportFile: (defaultFileName?: string) => window.api.saveExportFile(defaultFileName),
+        exportActiveSequence: (outputPath: string, exportOptions: ExportOptions) =>
+          window.api.exportActiveSequence(outputPath, exportOptions) as Promise<ExportResult>
+      },
+      projectName,
+      options,
+      createClientId,
+      clearExportToast,
+      showExportToast,
+      setLastError,
+      setExportStatus,
+      setExportMessage,
+      setExportProgress,
+      appendMessage: (message) => {
+        setMessages((current) => [...current, message])
+      }
+    })
   }, [clearExportToast, projectName, showExportToast])
 
   const runTool = useCallback(async (name: string, args: Record<string, unknown> = {}) => {
