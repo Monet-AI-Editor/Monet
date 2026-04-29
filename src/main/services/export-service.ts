@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { mkdtemp, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
+import { join } from 'path'
 import { promisify } from 'util'
 import type {
   Effect,
