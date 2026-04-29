@@ -66,8 +66,14 @@ async function runFfmpeg(
   const { durationSeconds, onProgress } = options
   const ffmpegBinary = resolveFfmpegBinary()
 
+  console.log('[export] ffmpeg', ffmpegBinary, args.join(' '))
+
   if (!onProgress || !durationSeconds || durationSeconds <= 0) {
-    await execFileAsync(ffmpegBinary, args, { maxBuffer: 50 * 1024 * 1024 })
+    const { stderr } = await execFileAsync(ffmpegBinary, args, { maxBuffer: 50 * 1024 * 1024, encoding: 'utf8' }).catch((err) => {
+      console.error('[export] ffmpeg error (execFile):', err.message)
+      throw err
+    })
+    if (stderr) console.error('[export] ffmpeg stderr:', stderr.slice(-2000))
     return
   }
 
@@ -81,6 +87,17 @@ async function runFfmpeg(
     let stdoutBuffer = ''
     let stderrBuffer = ''
     let lastProgress = 0
+    const startedAt = Date.now()
+    const warmupTimer = setInterval(() => {
+      // Some FFmpeg filter graphs take a while before emitting the first progress event.
+      // Advance a small amount so packaged builds do not appear frozen at the segment start.
+      const elapsedMs = Date.now() - startedAt
+      const syntheticProgress = Math.min(0.15, elapsedMs / 15000 * 0.15)
+      if (syntheticProgress > lastProgress) {
+        lastProgress = syntheticProgress
+        onProgress(syntheticProgress)
+      }
+    }, 500)
 
     const handleProgressChunk = (chunk: string) => {
       stdoutBuffer += chunk
@@ -120,10 +137,13 @@ async function runFfmpeg(
     })
 
     child.on('error', (error) => {
+      clearInterval(warmupTimer)
       reject(error)
     })
 
     child.on('close', (code) => {
+      clearInterval(warmupTimer)
+      if (code !== 0) console.error('[export] ffmpeg stderr:', stderrBuffer.slice(-3000))
       if (code === 0) {
         if (lastProgress < 1) onProgress(1)
         resolve()
@@ -472,6 +492,8 @@ type TimelineInterval = {
   videoLayers: ActiveTrackClip[]
   audioLayers: ActiveTrackClip[]
 }
+
+export type IntervalRenderStrategy = 'image' | 'video' | 'audio-only' | 'composite'
 
 function getAsset(project: EditorProjectRecord, assetId: string): MediaAssetRecord {
   const asset = project.assets.find((a) => a.id === assetId)
@@ -1195,6 +1217,71 @@ async function createCompositeSegment(
   await runFfmpeg(args, { durationSeconds: interval.duration, onProgress })
 }
 
+export function getIntervalRenderStrategy(interval: Pick<TimelineInterval, 'videoLayers' | 'audioLayers'>): IntervalRenderStrategy {
+  const hasSingleVideoLayer = interval.videoLayers.length === 1
+  const hasNoVisualStacking = interval.videoLayers.length <= 1
+  const hasNoAudioStacking = interval.audioLayers.length <= 1
+
+  if (hasSingleVideoLayer && hasNoVisualStacking && hasNoAudioStacking) {
+    const videoLayer = interval.videoLayers[0]
+    const audioLayer = interval.audioLayers[0]
+    const hasTransition = Boolean(videoLayer.transition || audioLayer?.transition)
+
+    const sameSourceAudio =
+      audioLayer &&
+      audioLayer.asset.id === videoLayer.asset.id &&
+      Math.abs(audioLayer.clip.inPoint - videoLayer.clip.inPoint) <= 0.05 &&
+      Math.abs(audioLayer.clip.duration - videoLayer.clip.duration) <= 0.05
+
+    if (!hasTransition && (!audioLayer || sameSourceAudio)) {
+      return videoLayer.asset.type === 'image' ? 'image' : 'video'
+    }
+  }
+
+  if (interval.videoLayers.length === 0 && interval.audioLayers.length === 1 && !interval.audioLayers[0].transition) {
+    return 'audio-only'
+  }
+
+  return 'composite'
+}
+
+async function createIntervalSegment(
+  segmentPath: string,
+  interval: TimelineInterval,
+  options: ExportOptions,
+  canvasSize: CanvasSize,
+  effectsService: EffectsService,
+  onProgress?: (progress: number) => void
+): Promise<void> {
+  const strategy = getIntervalRenderStrategy(interval)
+
+  if (strategy === 'image') {
+    const videoLayer = interval.videoLayers[0]
+    await createImageSegment(segmentPath, videoLayer.asset, interval.duration, options, canvasSize, onProgress)
+    return
+  }
+
+  if (strategy === 'video') {
+    const videoLayer = interval.videoLayers[0]
+    const audioLayer = interval.audioLayers[0]
+    const mergedClip: TimelineClipRecord = {
+      ...videoLayer.clip,
+      volume: audioLayer?.clip.volume ?? videoLayer.clip.volume,
+      speed: audioLayer?.clip.speed ?? videoLayer.clip.speed
+    }
+    await createVideoSegment(segmentPath, videoLayer.asset, mergedClip, effectsService, options, canvasSize, onProgress)
+    return
+  }
+
+  if (strategy === 'audio-only') {
+    const audioLayer = interval.audioLayers[0]
+    await createAudioOnlySegment(segmentPath, audioLayer.asset, audioLayer.clip, options, canvasSize, onProgress)
+    return
+  }
+
+  await createCompositeSegment(segmentPath, interval, options, canvasSize, effectsService, onProgress)
+}
+
 export class ExportService {
   private readonly effectsService = new EffectsService()
 
@@ -1209,6 +1296,7 @@ export class ExportService {
     const sequence = getActiveSequence(project)
     const canvasSize = getSequenceCanvasSize(sequence, options)
     const intervals = buildTimelineIntervals(project, sequence)
+    console.log('[export] intervals:', intervals.length, 'outputPath:', outputPath)
     if (intervals.length === 0) {
       throw new Error('The active sequence has no media to export.')
     }
@@ -1263,7 +1351,9 @@ export class ExportService {
       }
 
       const segPath = join(workDir, `seg-${index}.mp4`)
-      await createCompositeSegment(segPath, interval, options, canvasSize, this.effectsService, (segmentProgress) => {
+      const strategy = getIntervalRenderStrategy(interval)
+      console.log(`[export] segment ${index + 1}/${exportIntervals.length} strategy=${strategy} duration=${interval.duration.toFixed(3)}s layers=v${interval.videoLayers.length}+a${interval.audioLayers.length}`)
+      await createIntervalSegment(segPath, interval, options, canvasSize, this.effectsService, (segmentProgress) => {
         const interpolated =
           intervalStartProgress + (intervalEndProgress - intervalStartProgress) * Math.max(0, Math.min(1, segmentProgress))
         onProgress?.({
