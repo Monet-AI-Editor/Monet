@@ -1029,8 +1029,9 @@ app.whenReady().then(async () => {
   powerMonitor.on('resume', broadcastAppResume)
 
   // IPC: open file dialog
-  ipcMain.handle('dialog:openFiles', async () => {
-    const result = await dialog.showOpenDialog({
+  ipcMain.handle('dialog:openFiles', async (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const result = await dialog.showOpenDialog(senderWindow, {
       properties: ['openFile', 'multiSelections'],
       filters: [
         {
@@ -1043,19 +1044,21 @@ app.whenReady().then(async () => {
         }
       ]
     })
-    return result.filePaths
+    return result.canceled ? [] : result.filePaths
   })
 
   // IPC: open folder dialog
-  ipcMain.handle('dialog:openFolder', async () => {
-    const result = await dialog.showOpenDialog({
+  ipcMain.handle('dialog:openFolder', async (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const result = await dialog.showOpenDialog(senderWindow, {
       properties: ['openDirectory']
     })
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle('dialog:saveExportFile', async (_, defaultFileName?: string) => {
-    const result = await dialog.showSaveDialog({
+  ipcMain.handle('dialog:saveExportFile', async (event, defaultFileName?: string) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const result = await dialog.showSaveDialog(senderWindow, {
       defaultPath: join(app.getPath('downloads'), defaultFileName || 'monet-export.mp4'),
       filters: [
         { name: 'MP4 Video', extensions: ['mp4'] },
@@ -1071,8 +1074,9 @@ app.whenReady().then(async () => {
     return true
   })
 
-  ipcMain.handle('dialog:openProjectFile', async () => {
-    const result = await dialog.showOpenDialog({
+  ipcMain.handle('dialog:openProjectFile', async (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const result = await dialog.showOpenDialog(senderWindow, {
       properties: ['openFile', 'openDirectory'],
       filters: [{ name: 'Monet Project', extensions: ['aiveproj.json', 'json'] }]
     })
@@ -1080,8 +1084,9 @@ app.whenReady().then(async () => {
     return resolveProjectPathSelection(result.filePaths[0])
   })
 
-  ipcMain.handle('dialog:saveProjectFile', async () => {
-    const result = await dialog.showSaveDialog({
+  ipcMain.handle('dialog:saveProjectFile', async (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const result = await dialog.showSaveDialog(senderWindow, {
       defaultPath: join(app.getPath('documents'), 'untitled-project.aiveproj.json'),
       filters: [{ name: 'Monet Project', extensions: ['aiveproj.json', 'json'] }]
     })
@@ -1763,7 +1768,8 @@ app.whenReady().then(async () => {
       ...options,
       cwd: resolvedCwd,
       env: {
-        PATH: `${binDir}:${process.env.PATH ?? ''}`
+        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        TERM_PROGRAM_VERSION: app.getVersion()
       }
     })
     try {

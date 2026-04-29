@@ -33,6 +33,12 @@ export function ExportModal({ exportStatus, exportMessage, exportProgress, onClo
   const [resolution, setResolution] = useState<ExportResolution>('1080p')
   const [format, setFormat] = useState<ExportFormat>('mp4')
 
+  async function handleSubmit(event?: React.FormEvent) {
+    event?.preventDefault()
+    if (exportStatus === 'running') return
+    await onExport({ quality, resolution, format })
+  }
+
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === 'Escape' && exportStatus !== 'running') onClose()
@@ -48,7 +54,7 @@ export function ExportModal({ exportStatus, exportMessage, exportProgress, onClo
         if (event.target === event.currentTarget && exportStatus !== 'running') onClose()
       }}
     >
-      <div className="w-[420px] overflow-hidden rounded-xl border border-border bg-surface-1 shadow-2xl">
+      <form className="w-[420px] overflow-hidden rounded-xl border border-border bg-surface-1 shadow-2xl" onSubmit={(event) => void handleSubmit(event)}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="text-sm font-semibold text-text-primary">Export</h2>
@@ -133,6 +139,7 @@ export function ExportModal({ exportStatus, exportMessage, exportProgress, onClo
 
         <div className="flex items-center justify-end gap-2 border-t border-border bg-surface-0 px-5 py-3">
           <button
+            type="button"
             onClick={onClose}
             disabled={exportStatus === 'running'}
             className="rounded px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-3 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
@@ -140,7 +147,7 @@ export function ExportModal({ exportStatus, exportMessage, exportProgress, onClo
             Cancel
           </button>
           <button
-            onClick={() => void onExport({ quality, resolution, format })}
+            type="submit"
             disabled={exportStatus === 'running'}
             className={clsx(
               'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-semibold transition-colors',
@@ -153,7 +160,7 @@ export function ExportModal({ exportStatus, exportMessage, exportProgress, onClo
             {exportStatus === 'running' ? 'Exporting…' : 'Start Export'}
           </button>
         </div>
-      </div>
+      </form>
     </div>
   )
 }

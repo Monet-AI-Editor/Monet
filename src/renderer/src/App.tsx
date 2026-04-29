@@ -492,8 +492,8 @@ export default function App() {
           exportProgress={store.exportProgress}
           onClose={() => setShowExportModal(false)}
           onExport={async (options) => {
-            await store.exportSequence(options)
-            setShowExportModal(false)
+            const completed = await store.exportSequence(options)
+            if (completed) setShowExportModal(false)
           }}
         />
       )}

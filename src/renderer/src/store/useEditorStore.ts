@@ -279,7 +279,7 @@ export interface EditorActions {
   persistAISettings: (overrides?: Partial<AISettings>) => Promise<void>
   sendMessage: (content: string) => Promise<void>
   runTool: (name: string, args?: Record<string, unknown>) => Promise<void>
-  exportSequence: (options: ExportOptions) => Promise<void>
+  exportSequence: (options: ExportOptions) => Promise<boolean>
   setPlayheadTime: (t: number) => void
   setIsPlaying: (v: boolean) => void
   setZoom: (z: number) => void
@@ -708,7 +708,7 @@ export function useEditorStore(): EditorState & EditorActions {
     try {
       const baseName = projectName.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'monet-export'
       const outputPath = await window.api.saveExportFile(`${baseName}.${options.format}`)
-      if (!outputPath) return
+      if (!outputPath) return false
 
       setExportMessage(`Rendering ${options.resolution} ${options.format.toUpperCase()} export…`)
 
@@ -725,6 +725,7 @@ export function useEditorStore(): EditorState & EditorActions {
           status: 'done'
         }
       ])
+      return true
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Export failed.'
       setLastError(message)
@@ -738,6 +739,7 @@ export function useEditorStore(): EditorState & EditorActions {
           status: 'error'
         }
       ])
+      return false
     } finally {
       setExportStatus('idle')
       setExportMessage(null)
