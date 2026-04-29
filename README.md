@@ -97,7 +97,7 @@ The goal is simple: make video editing something coding agents can actually oper
 
 ### macOS app
 
-Monet is currently macOS-first. Install with one command — no Gatekeeper prompts:
+Monet is currently macOS-first. Install with one command in your terminal — no Gatekeeper prompts:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Monet-AI-Editor/Monet/main/install.sh | bash
