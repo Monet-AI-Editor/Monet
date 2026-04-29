@@ -61,6 +61,7 @@ export function ExportModal({ exportStatus, exportMessage, exportProgress, onClo
             <p className="mt-1 text-2xs text-text-dim">Choose a render preset for the active sequence.</p>
           </div>
           <button
+            type="button"
             onClick={onClose}
             disabled={exportStatus === 'running'}
             className="rounded p-1 text-text-dim hover:bg-surface-3 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
