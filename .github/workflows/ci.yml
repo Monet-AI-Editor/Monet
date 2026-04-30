@@ -49,4 +49,5 @@ jobs:
       - name: Build macOS release smoke artifact
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: npm run dist:mac
