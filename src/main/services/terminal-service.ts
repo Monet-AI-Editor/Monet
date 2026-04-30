@@ -17,6 +17,22 @@ type TerminalCreateOptions = {
   env?: Record<string, string>
 }
 
+export function buildTerminalEnv(sessionEnv: Record<string, string> = {}, appRoot = process.cwd()): Record<string, string> {
+  const env = {
+    ...process.env,
+    ...sessionEnv,
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor',
+    CLICOLOR: '1',
+    CLICOLOR_FORCE: '1',
+    TERM_PROGRAM: 'Monet',
+    TERM_PROGRAM_VERSION: sessionEnv.TERM_PROGRAM_VERSION || process.env.npm_package_version || 'unknown',
+    AI_VIDEO_EDITOR_ROOT: appRoot
+  }
+  delete env.NO_COLOR
+  return env
+}
+
 export class TerminalService {
   private readonly sessions = new Map<string, TerminalSession>()
 
@@ -37,18 +53,7 @@ export class TerminalService {
     const shell = options.shell || process.env.SHELL || '/bin/zsh'
     const cwd = options.cwd || process.cwd()
     const id = createId('term')
-    const env = {
-      ...process.env,
-      ...options.env,
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      CLICOLOR: '1',
-      CLICOLOR_FORCE: '1',
-      TERM_PROGRAM: 'Monet',
-      TERM_PROGRAM_VERSION: options.env?.TERM_PROGRAM_VERSION || process.env.npm_package_version || 'unknown',
-      AI_VIDEO_EDITOR_ROOT: process.cwd()
-    }
-    delete env.NO_COLOR
+    const env = buildTerminalEnv(options.env, process.cwd())
 
     const pty = spawn(shell, ['-l'], {
       name: 'xterm-256color',

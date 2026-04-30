@@ -13,19 +13,25 @@ import { WelcomeScreen } from './components/WelcomeScreen'
 import { CanvasPanel } from './components/CanvasPanel'
 import clsx from 'clsx'
 import type { AppUpdateState } from './types'
+import { decideUndoRedoShortcut, isEditableTargetSnapshot } from './app-interactions'
 
 type ViewMode = 'editor' | 'canvas'
 
 function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  if (target.closest('.xterm')) return true
-  const tagName = target.tagName.toLowerCase()
-  return (
-    target.isContentEditable ||
-    tagName === 'input' ||
-    tagName === 'textarea' ||
-    tagName === 'select'
-  )
+  if (!(target instanceof HTMLElement)) {
+    return isEditableTargetSnapshot({
+      isHTMLElement: false,
+      isContentEditable: false,
+      insideXterm: false
+    })
+  }
+
+  return isEditableTargetSnapshot({
+    isHTMLElement: true,
+    isContentEditable: target.isContentEditable,
+    tagName: target.tagName,
+    insideXterm: Boolean(target.closest('.xterm'))
+  })
 }
 
 export default function App() {
@@ -208,18 +214,21 @@ export default function App() {
     if (shouldShowWelcome) return
 
     function onKeyDown(event: KeyboardEvent) {
-      if (!event.metaKey || event.altKey) return
-      const key = event.key.toLowerCase()
       const editableTarget = isEditableTarget(event.target)
+      const decision = decideUndoRedoShortcut({
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        key: event.key,
+        editableTarget
+      })
 
-      if (key === 'z' && !editableTarget) {
+      if (decision !== 'ignore') {
         event.preventDefault()
-
-        if (event.shiftKey) {
+        if (decision === 'redo') {
           void store.redo()
           return
         }
-
         void store.undo()
         return
       }

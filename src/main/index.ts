@@ -30,6 +30,8 @@ import { RecentProjectsStore } from './services/recent-projects-store'
 import { AnalyticsService } from './services/analytics-service'
 import { UpdateService } from './services/update-service'
 import { ensureAgentContextFiles } from './services/agent-context'
+import { normalizeOpenFilesResult, normalizeOpenPathResult, normalizeSavePathResult } from './services/dialog-service'
+import { registerDialogIpcHandlers } from './services/dialog-ipc-service'
 import type { AISettings, EditorChatRequest, EditorProjectRecord, ExportOptions, MediaAssetRecord } from '../shared/editor'
 
 const SENTRY_DSN = process.env.MONET_SENTRY_DSN || ''
@@ -1028,69 +1030,19 @@ app.whenReady().then(async () => {
   app.on('resume', broadcastAppResume)
   powerMonitor.on('resume', broadcastAppResume)
 
-  // IPC: open file dialog
-  ipcMain.handle('dialog:openFiles', async (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
-    const result = await dialog.showOpenDialog(senderWindow, {
-      properties: ['openFile', 'multiSelections'],
-      filters: [
-        {
-          name: 'Media',
-          extensions: [
-            'mp4', 'm4v', 'mov', 'avi', 'mkv', 'webm', 'mpg', 'mpeg', 'wmv', 'ts', 'mts', 'm2ts',
-            'mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg', 'opus', 'aif', 'aiff',
-            'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'svg'
-          ]
-        }
-      ]
-    })
-    return result.canceled ? [] : result.filePaths
-  })
-
-  // IPC: open folder dialog
-  ipcMain.handle('dialog:openFolder', async (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
-    const result = await dialog.showOpenDialog(senderWindow, {
-      properties: ['openDirectory']
-    })
-    return result.canceled ? null : result.filePaths[0]
-  })
-
-  ipcMain.handle('dialog:saveExportFile', async (event, defaultFileName?: string) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
-    const result = await dialog.showSaveDialog(senderWindow, {
-      defaultPath: join(app.getPath('downloads'), defaultFileName || 'monet-export.mp4'),
-      filters: [
-        { name: 'MP4 Video', extensions: ['mp4'] },
-        { name: 'QuickTime Movie', extensions: ['mov'] }
-      ]
-    })
-    return result.canceled ? null : result.filePath
+  registerDialogIpcHandlers({
+    ipcMain,
+    dialog,
+    browserWindowLookup: BrowserWindow,
+    downloadsPath: app.getPath('downloads'),
+    documentsPath: app.getPath('documents'),
+    resolveProjectPathSelection
   })
 
   ipcMain.handle('system:revealInFinder', async (_, filePath: string) => {
     if (!filePath) return false
     shell.showItemInFolder(filePath)
     return true
-  })
-
-  ipcMain.handle('dialog:openProjectFile', async (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
-    const result = await dialog.showOpenDialog(senderWindow, {
-      properties: ['openFile', 'openDirectory'],
-      filters: [{ name: 'Monet Project', extensions: ['aiveproj.json', 'json'] }]
-    })
-    if (result.canceled || result.filePaths.length === 0) return null
-    return resolveProjectPathSelection(result.filePaths[0])
-  })
-
-  ipcMain.handle('dialog:saveProjectFile', async (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
-    const result = await dialog.showSaveDialog(senderWindow, {
-      defaultPath: join(app.getPath('documents'), 'untitled-project.aiveproj.json'),
-      filters: [{ name: 'Monet Project', extensions: ['aiveproj.json', 'json'] }]
-    })
-    return result.canceled ? null : result.filePath
   })
 
   ipcMain.handle('editor:getProjectManagerState', async () => {
