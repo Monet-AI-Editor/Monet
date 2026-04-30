@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Download, X } from 'lucide-react'
 import clsx from 'clsx'
 import type { ExportFormat, ExportOptions, ExportQuality, ExportResolution } from '../types'

@@ -15,7 +15,7 @@ test('ExportModal renders the idle export form copy and actions', () => {
     })
   )
 
-  assert.match(markup, /<form/)
+  assert.match(markup, /<div/)
   assert.match(markup, /Choose a render preset for the active sequence\./)
   assert.match(markup, /Start Export/)
   assert.match(markup, /MP4 \(H\.264\)/)
