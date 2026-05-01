@@ -1350,7 +1350,7 @@ export class APIBridge {
 
   private async handleCommand(command: string, args: any = {}): Promise<any> {
     const normalizedCommand =
-      command === 'get-state' ? 'get_control_state'
+      command === 'get-state' || command === 'get_state' ? 'get_control_state'
       : command === 'list-assets' ? 'list_assets'
       : command === 'list-sequences' ? 'list_sequences'
       : command === 'list-tracks' ? 'get_tracks'

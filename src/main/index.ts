@@ -74,6 +74,7 @@ let updateService: UpdateService
 let aiChatService: AIChatService
 let exportService: ExportService
 let apiBridge: APIBridge
+let shimBinDir: string | undefined
 const terminalService = new TerminalService()
 const controlStateService = new ControlStateService()
 
@@ -1002,7 +1003,7 @@ app.whenReady().then(async () => {
     safeBroadcast('project:updated', project)
     const summary = getProjectSummary(project)
     for (const cwd of terminalService.getSessionDirectories()) {
-      void ensureAgentContextFiles(cwd, summary).catch((error) => {
+      void ensureAgentContextFiles(cwd, summary, shimBinDir).catch((error) => {
         console.warn('[Terminal] Failed to refresh agent context files:', error)
       })
     }
@@ -1758,6 +1759,7 @@ app.whenReady().then(async () => {
       await mkdir(scratchTerminalDir, { recursive: true })
     }
     const { shimPath, binDir, zdotdir } = await ensureEditorctlShim()
+    shimBinDir = binDir
     const resolvedCwd =
       options.cwd ||
       (projectFilePath ? dirname(projectFilePath) : scratchTerminalDir)

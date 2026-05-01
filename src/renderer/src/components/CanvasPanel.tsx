@@ -541,6 +541,27 @@ function snapValue(value: number, candidates: number[], threshold: number): { va
   return { value: bestValue, guide: bestGuide }
 }
 
+async function resolveMediaUrls(html: string): Promise<string> {
+  const matches = [...html.matchAll(/media:\/\/[^"'\s>]+/g)]
+  const unique = [...new Set(matches.map(m => m[0]))]
+  if (unique.length === 0) return html
+  let result = html
+  await Promise.all(unique.map(async url => {
+    try {
+      const resp = await fetch(url)
+      const blob = await resp.blob()
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+      })
+      result = result.replaceAll(url, dataUrl)
+    } catch { /* leave as-is */ }
+  }))
+  return result
+}
+
 function makeDoc(html: string, w: number, h: number) {
   return `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
@@ -971,6 +992,30 @@ export function CanvasPanel({ projectStorageKey, assets = [] }: { projectStorage
       cancelled = true
     }
   }, [assets, buildArtboardsFromMediaAssets, legacyStorageKey, normalizeArtboards, storageKey])
+
+  const [resolvedHtmlMap, setResolvedHtmlMap] = useState<Map<string, string>>(new Map())
+
+  useEffect(() => {
+    const needsResolution = artboards.filter(
+      ab => ab.mode === 'html' && ab.html && ab.html.includes('media://')
+    )
+    if (needsResolution.length === 0) return
+    let cancelled = false
+    Promise.all(
+      needsResolution.map(async ab => {
+        const resolved = await resolveMediaUrls(ab.html!)
+        return [ab.id, resolved] as [string, string]
+      })
+    ).then(entries => {
+      if (cancelled) return
+      setResolvedHtmlMap(prev => {
+        const next = new Map(prev)
+        for (const [id, html] of entries) next.set(id, html)
+        return next
+      })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [artboards])
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -2847,7 +2892,12 @@ export function CanvasPanel({ projectStorageKey, assets = [] }: { projectStorage
                         key={`${ab.id}-${editingId === ab.id ? 'live' : 'saved'}-${ab.mode}`}
                         ref={el => { if (el) iframeRefs.current.set(ab.id, el); else iframeRefs.current.delete(ab.id) }}
                         data-frame-id={ab.id}
-                        srcDoc={getArtboardSrcDoc(ab, liveHtml, editHtml, editScript, editingId)}
+                        srcDoc={getArtboardSrcDoc(
+                          ab.mode === 'html' && resolvedHtmlMap.has(ab.id)
+                            ? { ...ab, html: resolvedHtmlMap.get(ab.id)! }
+                            : ab,
+                          liveHtml, editHtml, editScript, editingId
+                        )}
                         onLoad={() => {
                           if (editingId === ab.id && ab.mode === 'html') {
                             setTimeout(() => syncEditHtmlFromIframe(ab.id), 0)
