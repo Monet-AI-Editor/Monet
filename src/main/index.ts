@@ -482,6 +482,10 @@ function getLegacyAutosavePath(): string {
   return join(app.getPath('userData'), 'autosave.aiveproj.json')
 }
 
+function getCanvasFramesDirectory(): string {
+  return join(app.getPath('userData'), 'canvas-frames')
+}
+
 function getManagedProjectsDirectory(): string {
   return join(app.getPath('documents'), 'Monet Projects')
 }
@@ -618,31 +622,30 @@ exec "$TARGET" --append-system-prompt "${escapedPrompt}" "$@"
 
   return `#!/bin/sh
 SELF_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
-ORIGINAL_PATH="$(printf '%s' "$PATH" | awk -v self="$SELF_DIR" 'BEGIN{RS=":"; ORS=":"} $0 != self { print }' | sed 's/:$//')"
-if [ -n "$ORIGINAL_PATH" ]; then
-  PATH="$ORIGINAL_PATH"
-  export PATH
-fi
-TARGET="$(command -v codex)"
+# Use stripped PATH only to locate the real codex binary (avoids wrapper recursion).
+# Then call it with the ORIGINAL PATH so editorctl stays accessible in subshells.
+STRIPPED_PATH="$(printf '%s' "$PATH" | awk -v self="$SELF_DIR" 'BEGIN{RS=":"; ORS=":"} $0 != self { print }' | sed 's/:$//')"
+TARGET="$(PATH="$STRIPPED_PATH" command -v codex)"
 if [ -z "$TARGET" ]; then
   echo "codex could not be found on PATH." >&2
   exit 1
 fi
 if [ "$#" -eq 0 ]; then
-  exec "$TARGET" "${escapedPrompt}"
+  exec "$TARGET" -s danger-full-access "${escapedPrompt}"
 else
-  exec "$TARGET" "$@"
+  exec "$TARGET" -s danger-full-access "$@"
 fi
 `
 }
 
-async function ensureEditorctlShim(): Promise<{ shimPath: string | null; binDir: string }> {
+async function ensureEditorctlShim(): Promise<{ shimPath: string | null; binDir: string; zdotdir: string }> {
   const binDir = join(app.getPath('userData'), 'bin')
   await mkdir(binDir, { recursive: true })
   const shimPath = join(binDir, 'editorctl')
   const entryPath = await resolveEditorctlEntry()
   if (!entryPath) {
-    return { shimPath: null, binDir }
+    const zdotdir = join(app.getPath('userData'), 'zdotdir')
+    return { shimPath: null, binDir, zdotdir }
   }
 
   const candidates = getEditorctlCandidates()
@@ -671,7 +674,22 @@ exit 1
     await chmod(wrapperPath, 0o755)
   }
 
-  return { shimPath, binDir }
+  // Write a ZDOTDIR that chain-loads the user's real rc files then re-prepends our binDir.
+  // This survives the zsh login shell's path_helper rewrite of PATH in /etc/zprofile.
+  const zdotdir = join(app.getPath('userData'), 'zdotdir')
+  await mkdir(zdotdir, { recursive: true })
+  // Chain-load user .zshenv (sourced for all shells, before /etc/zprofile)
+  await writeFile(join(zdotdir, '.zshenv'), '[ -f "$HOME/.zshenv" ] && source "$HOME/.zshenv"\n', 'utf8')
+  // Chain-load user .zprofile (login shell, runs after path_helper in /etc/zprofile)
+  await writeFile(join(zdotdir, '.zprofile'), '[ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile"\n', 'utf8')
+  // Chain-load user .zshrc then prepend our bin — this runs last, guaranteeing our path wins
+  await writeFile(
+    join(zdotdir, '.zshrc'),
+    `unset ZDOTDIR\n[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"\nexport PATH="${binDir}:$PATH"\n`,
+    'utf8'
+  )
+
+  return { shimPath, binDir, zdotdir }
 }
 
 async function listSavedProjectsFromDirectory(directory: string): Promise<RecentProjectEntry[]> {
@@ -1615,10 +1633,35 @@ app.whenReady().then(async () => {
   })
 
   // Canvas state storage
-  ipcMain.handle('canvas:saveState', (_event, artboards: unknown[]) => {
-    canvasStateCacheByProject.set(getCanvasStateProjectKey(), artboards)
+  ipcMain.handle('canvas:saveState', async (_event, artboards: unknown[]) => {
+    const key = getCanvasStateProjectKey()
+    canvasStateCacheByProject.set(key, artboards)
     canvasStateCache = artboards
+    try {
+      const stateDir = join(app.getPath('userData'), 'canvas-state')
+      await mkdir(stateDir, { recursive: true })
+      const safeName = key.replace(/[^a-z0-9_-]/gi, '_').slice(0, 120)
+      await writeFile(join(stateDir, `${safeName}.json`), JSON.stringify(artboards), 'utf8')
+    } catch { /* non-fatal */ }
     return { ok: true }
+  })
+
+  ipcMain.handle('canvas:loadState', async () => {
+    const key = getCanvasStateProjectKey()
+    const cached = canvasStateCacheByProject.get(key)
+    if (cached && cached.length > 0) return { ok: true, artboards: cached }
+    try {
+      const safeName = key.replace(/[^a-z0-9_-]/gi, '_').slice(0, 120)
+      const filePath = join(app.getPath('userData'), 'canvas-state', `${safeName}.json`)
+      const raw = await readFile(filePath, 'utf8')
+      const artboards = JSON.parse(raw) as unknown[]
+      if (Array.isArray(artboards) && artboards.length > 0) {
+        canvasStateCacheByProject.set(key, artboards)
+        canvasStateCache = artboards
+        return { ok: true, artboards }
+      }
+    } catch { /* file missing or corrupt — normal on first run */ }
+    return { ok: false, artboards: [] }
   })
 
   ipcMain.handle('canvas:recoverLegacyState', async () => {
@@ -1649,8 +1692,10 @@ app.whenReady().then(async () => {
     try {
       const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
       const buffer = Buffer.from(base64, 'base64')
-      const safeName = name.replace(/[^a-z0-9-_]/gi, '_').slice(0, 50)
-      const outputPath = join(app.getPath('temp'), `canvas-frame-${safeName}-${Date.now()}.png`)
+      const safeName = (name.replace(/[^a-z0-9-_]/gi, '_').slice(0, 50) || 'frame')
+      const outputDir = getCanvasFramesDirectory()
+      const outputPath = join(outputDir, `canvas-frame-${safeName}-${Date.now()}.png`)
+      await mkdir(outputDir, { recursive: true })
       await writeFile(outputPath, buffer)
       // importFiles triggers projectStore.subscribe → safeBroadcast('project:updated') automatically
       const [asset] = projectStore.importFiles([outputPath])
@@ -1712,7 +1757,7 @@ app.whenReady().then(async () => {
     if (!projectFilePath && !options.cwd) {
       await mkdir(scratchTerminalDir, { recursive: true })
     }
-    const { shimPath, binDir } = await ensureEditorctlShim()
+    const { shimPath, binDir, zdotdir } = await ensureEditorctlShim()
     const resolvedCwd =
       options.cwd ||
       (projectFilePath ? dirname(projectFilePath) : scratchTerminalDir)
@@ -1720,6 +1765,10 @@ app.whenReady().then(async () => {
       ...options,
       cwd: resolvedCwd,
       env: {
+        // ZDOTDIR makes zsh chain-load our rc files which re-prepend binDir after
+        // path_helper rewrites PATH in /etc/zprofile (login shell startup).
+        ZDOTDIR: zdotdir,
+        // Fallback for non-zsh shells where ZDOTDIR has no effect.
         PATH: `${binDir}:${process.env.PATH ?? ''}`,
         TERM_PROGRAM_VERSION: app.getVersion()
       }
@@ -1733,7 +1782,7 @@ app.whenReady().then(async () => {
         activeSequenceName: activeSequence?.name ?? null,
         activeSequenceDuration: activeSequence?.duration ?? null,
         assetNames: project.assets.slice(0, 8).map((asset) => asset.name)
-      })
+      }, binDir)
       terminalService.sendOutput(
         session.id,
         '\x1b[96mMonet agent context ready.\x1b[0m\r\n' +

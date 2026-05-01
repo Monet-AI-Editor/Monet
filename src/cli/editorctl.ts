@@ -39,6 +39,11 @@ function resolveProjectFile(): string {
   return preferred
 }
 
+function readJsonArgument(input: string): unknown {
+  const raw = input.startsWith('@') ? readFileSync(input.slice(1), 'utf8') : input
+  return JSON.parse(raw)
+}
+
 async function probeLiveAppOnPort(host: string, port: number): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
     const request = httpRequest(
@@ -260,7 +265,7 @@ COMMANDS:
 CANVAS COMMANDS (Monet Canvas tab — requires live app):
   canvas-frames            List all canvas artboard frames
   canvas-add-frame <name> <width> <height> [mode]
-                          Add a new frame (mode: html|paperjs|matterjs, default: html)
+                          Add a new frame (mode: paperjs|matterjs|html, default: paperjs)
   canvas-run-paperjs <frameId> <script>
                           Set Paper.js script on a frame. Full Paper.js API available.
                           Variables in scope: frame, fps, width, height
@@ -309,6 +314,7 @@ EXAMPLES:
   editorctl export ~/Desktop/output.mov high 4k mov
 
   editorctl canvas-frames
+  editorctl canvas-add-frame "Paper Layout" 1440 900 paperjs
   editorctl canvas-add-frame "Physics Demo" 1280 720 matterjs
   editorctl canvas-run-matterjs frame_123 "var ball = Bodies.circle(640, 50, 40, { restitution: 0.9 }); Composite.add(engine.world, [ball]);"
   editorctl canvas-run-paperjs frame_456 "var c = new Path.Circle({ center: view.center, radius: 100, fillColor: '#5b82f7' });"
@@ -360,9 +366,9 @@ async function main(): Promise<void> {
 ║  The user is looking at the Monet Canvas drawing board, NOT the      ║
 ║  video editor timeline.                                              ║
 ║                                                                      ║
-║  DO:   editorctl canvas-loading "…"                                  ║
+║  DO:   ask whether the user wants Paper.js, Matter.js, or GPT image  ║
+║        editorctl canvas-loading "…"                                  ║
 ║        editorctl canvas-add-frame <name> <w> <h> paperjs|matterjs    ║
-║        editorctl canvas-run-paperjs <id> "<script>"                  ║
 ║        editorctl canvas-done                                         ║
 ║                                                                      ║
 ║  OPTION A — Draw in canvas (Paper.js / Matter.js / HTML):            ║
@@ -903,9 +909,9 @@ async function main(): Promise<void> {
         }
 
         case 'canvas-add-frame': {
-          const [, name, widthStr, heightStr, mode = 'html'] = args
+          const [, name, widthStr, heightStr, mode = 'paperjs'] = args
           if (!name || !widthStr || !heightStr) {
-            console.error('Usage: editorctl canvas-add-frame <name> <width> <height> [mode=html|paperjs|matterjs]')
+            console.error('Usage: editorctl canvas-add-frame <name> <width> <height> [mode=paperjs|matterjs|html]')
             process.exit(1)
           }
           await callLiveApp('canvas-add-frame', {
@@ -915,6 +921,22 @@ async function main(): Promise<void> {
             mode
           })
           console.log(`Added ${mode} frame: ${name}`)
+          return
+        }
+
+        case 'canvas-add-design-frame': {
+          const [, name, widthStr, heightStr, designArg] = args
+          if (!name || !widthStr || !heightStr) {
+            console.error('canvas-add-design-frame is no longer supported. Use canvas-add-frame with mode=paperjs or matterjs.')
+            process.exit(1)
+          }
+          await callLiveApp('canvas-add-design-frame', {
+            name,
+            width: parseInt(widthStr, 10),
+            height: parseInt(heightStr, 10),
+            ...(designArg && { design: readJsonArgument(designArg) })
+          })
+          console.log(`Added design frame: ${name}`)
           return
         }
 
@@ -961,6 +983,20 @@ async function main(): Promise<void> {
             ...(opts.height && { height: parseInt(opts.height, 10) })
           })
           console.log(`Updated frame ${frameId}`)
+          return
+        }
+
+        case 'canvas-update-design-frame': {
+          const [, frameId, designArg] = args
+          if (!frameId || !designArg) {
+            console.error('Usage: editorctl canvas-update-design-frame <frameId> <@design.json|inline-json>')
+            process.exit(1)
+          }
+          await callLiveApp('canvas-update-design-frame', {
+            id: frameId,
+            design: readJsonArgument(designArg)
+          })
+          console.log(`Updated design frame ${frameId}`)
           return
         }
 

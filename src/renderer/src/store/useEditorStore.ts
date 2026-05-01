@@ -313,6 +313,10 @@ const EMPTY_SETTINGS: AISettings = {
   agentInstallNudgeSeen: false
 }
 
+export function isMissingProjectSelectionError(error: unknown): boolean {
+  return error instanceof Error && /No \.aiveproj\.json project file was found in that folder\./.test(error.message)
+}
+
 export function useEditorStore(): EditorState & EditorActions {
   const [projectName, setProjectNameState] = useState('Untitled Project')
   const [assets, setAssets] = useState<MediaAsset[]>([])
@@ -539,7 +543,15 @@ export function useEditorStore(): EditorState & EditorActions {
   }, [applyBootstrapMeta, applyProject])
 
   const openProject = useCallback(async (explicitPath?: string) => {
-    const filePath = explicitPath ?? await window.api.openProjectFile()
+    let filePath = explicitPath ?? null
+    if (!filePath) {
+      try {
+        filePath = await window.api.openProjectFile()
+      } catch (error) {
+        if (isMissingProjectSelectionError(error)) return false
+        throw error
+      }
+    }
     if (!filePath) return false
     setIsPlaying(false)
     clearExportToast()

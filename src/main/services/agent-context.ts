@@ -19,15 +19,16 @@ const PRIMARY_CONTEXT_FILE = 'MONET_AGENT_CONTEXT.md'
 
 export async function ensureAgentContextFiles(
   cwd: string,
-  summary: AgentContextProjectSummary
+  summary: AgentContextProjectSummary,
+  binDir?: string
 ): Promise<AgentContextPaths> {
   const guidePath = join(cwd, PRIMARY_CONTEXT_FILE)
   const claudePath = join(cwd, 'CLAUDE.md')
   const agentsPath = join(cwd, 'AGENTS.md')
 
-  const guideBody = buildGuideBody(summary)
-  const claudeBody = buildClaudeBody()
-  const agentsBody = buildAgentsBody()
+  const guideBody = buildGuideBody(summary, binDir)
+  const claudeBody = buildClaudeBody(binDir)
+  const agentsBody = buildAgentsBody(binDir)
 
   await writeFile(guidePath, guideBody, 'utf8')
   await writeFile(claudePath, claudeBody, 'utf8')
@@ -36,7 +37,10 @@ export async function ensureAgentContextFiles(
   return { guidePath, claudePath, agentsPath }
 }
 
-function buildGuideBody(summary: AgentContextProjectSummary): string {
+function buildGuideBody(summary: AgentContextProjectSummary, binDir?: string): string {
+  const editorctlFallback = binDir
+    ? `\nIf \`editorctl\` is not found (command not found / exit 127), run it with the full path:\n\`\`\`bash\n"${binDir}/editorctl" get-state\n\`\`\`\nDo NOT fall back to the HTTP bridge until you have tried the full path.\n`
+    : ''
   return `# Monet Agent Context
 
 Monet is an AI-first video editor. You are running inside Monet's built-in terminal.
@@ -50,13 +54,14 @@ The user can switch between Video Editor and Monet Canvas at any time during the
 \`\`\`bash
 editorctl get-state
 \`\`\`
+${editorctlFallback}
 
 Read \`activeView\` in the output — it decides everything:
 
 | activeView | What to do |
 |---|---|
 | \`"editor"\` | Work on the video timeline: clips, tracks, effects, Remotion, import assets |
-| \`"canvas"\` | Draw on Monet Canvas. **Do NOT use Remotion. Do NOT use \`editorctl import\`.** Ask the user draw-vs-photo first. If drawing: \`canvas-run-paperjs\`/\`canvas-run-matterjs\`. If image: \`generate-image\` then \`canvas-add-image\`. |
+| \`"canvas"\` | Work in Monet Canvas. **Do NOT use Remotion. Do NOT use \`editorctl import\`.** Ask the user which of the THREE options they want: (1) Paper.js — code drawing, (2) Matter.js — physics/animation, (3) GPT image 2 — AI image. These are the ONLY three options. No design/editable layers mode. |
 
 **Remotion (npx remotion render, video_editor_render_remotion) is for the video editor ONLY. Never use it when activeView is "canvas".**
 
@@ -210,22 +215,42 @@ After rendering, import into Monet: \`editorctl import /absolute/path/to/output.
 
 MCP tools (auto-import): \`video_editor_list_remotion_compositions\`, \`video_editor_render_remotion\`, \`video_editor_render_remotion_still\`
 
-## Monet Canvas — Paper.js & Matter.js
+## Monet Canvas — Paper.js, Matter.js & GPT image
 
-> **CANVAS CLARIFICATION RULE:** When \`activeView\` is \`"canvas"\` and the user asks you to "generate", "create", "draw", or "make" something visual, **always ask first in plain language before doing anything**. Do not mention Paper.js, Matter.js, or technical library names — the user may not know what those are. Ask like this:
+> **CANVAS RULE:** When \`activeView\` is \`"canvas"\` and the user asks you to "generate", "create", "draw", or "make" something visual, **always ask first before doing anything**. Present EXACTLY these three options, word-for-word:
 >
-> *"Quick question before I start — do you want me to **draw this in code** directly on the canvas (shapes, animation, physics — fully editable), or **generate it as an image using GPT image generation** (AI-rendered photo/illustration that gets imported into your timeline)?"*
+> *"Which would you like? (1) Paper.js — code drawing with vector graphics, (2) Matter.js — physics and animation, (3) GPT image 2 — AI-generated image"*
 >
-> - If they say draw / code / canvas / animate / interactive / editable → use \`canvas_run_paperjs\` or \`canvas_run_matterjs\`
-> - If they say photo / image / realistic / AI image / GPT / import / timeline → use \`generate_image\` or \`editorctl generate-image\`
-> - If unclear → default to drawing in the canvas, tell them what you're doing, and offer: *"I'm drawing this in code on the canvas — let me know if you'd prefer a GPT-generated image instead."*
+> - If they say Paper.js / draw / code / vector / animate → use \`canvas_run_paperjs\`
+> - If they say Matter.js / physics / bounce / simulation → use \`canvas_run_matterjs\`
+> - If they say image / photo / GPT / AI image → use \`generate_image\` or \`editorctl generate-image\`
+> - If unclear → ask again. Do not assume.
 >
-> Never assume. Always ask first when in canvas mode.
+> **FORBIDDEN — do NOT offer these:** design layers, editable layers, Figma-style, node-based design, direct canvas design. There is NO design mode.
 
-The Monet Canvas tab (switch at the top bar) has artboard-based design with three frame modes:
-- **html** — raw HTML/CSS/JS (default)
+### ⚠️ BRAND RULE — NO EXCEPTIONS
+
+**If the user's message contains ANY URL or domain name (e.g. \`spotify.com\`, \`https://linear.app\`, \`notion.so\`), you MUST fetch the page and extract brand tokens BEFORE writing a single line of canvas code.**
+
+Do not use assumed or memorized brand colors. Do not skip this step even if you think you know the brand. Fetch first, design second — every single time.
+
+\`\`\`bash
+# Step 1 — extract colors, fonts, border-radius from CSS
+curl -sL "<url>" | grep -Eo '(#[0-9a-fA-F]{3,8}|font-family:[^;"}]+|font-size:[^;"}]+|border-radius:[^;"}]+)' | sort -u | head -60
+
+# Step 2 — find logo
+curl -sL "<url>" | grep -Eo '(src|href)="[^"]*logo[^"]*"' | head -10
+curl -sL "<url>" | grep 'og:image'
+\`\`\`
+
+Extract and note before writing any code: background colors, primary/accent colors, text colors, font families, font sizes/weights, border radius, spacing, shadows, and the logo. Hard-code those exact values into the script — never guess.
+
+If the fetch fails, tell the user and ask them to paste the hex values. Do NOT fall back to guessing.
+
+The Monet Canvas tab (switch at the top bar) has artboard-based frames with three modes:
 - **paperjs** — full Paper.js vector graphics API, live preview in sandboxed iframe
 - **matterjs** — full Matter.js 2D physics simulation, live in sandboxed iframe
+- **html** — raw HTML/CSS/JS
 
 ### Decision guide: which surface to use
 
@@ -233,6 +258,7 @@ The Monet Canvas tab (switch at the top bar) has artboard-based design with thre
 |------|---------|---------|
 | Vector illustration / graphic | Canvas → Paper.js frame | \`editorctl canvas-run-paperjs\` |
 | Physics simulation (interactive) | Canvas → Matter.js frame | \`editorctl canvas-run-matterjs\` |
+| AI-generated image | GPT image 2 | \`editorctl generate-image\` + \`canvas-add-image\` |
 | Export physics animation as video | Remotion → PhysicsScene | \`video_editor_render_remotion\` |
 | Export Paper.js artwork as video | Remotion → PaperCanvas | \`video_editor_render_remotion\` |
 | Animated lower-third / title card | Remotion → LowerThird / TitleCard | \`video_editor_render_remotion\` |
@@ -256,36 +282,57 @@ editorctl canvas-loading "Drawing glitchy logo…"
 editorctl canvas-done
 \`\`\`
 
-This shows an animated grid on the canvas while you work, and clears it when done.
+This should only target a frame-level loader. Do not use or expect a full-screen canvas overlay.
+
+### ⚠️ DESTRUCTION WARNING — read before touching any frame
+
+**NEVER run canvas-clear, canvas_clear, canvas-delete-frame, or canvas_delete_frame unless the user has EXPLICITLY asked you to delete frames or clear the canvas.** These operations permanently destroy the user's existing work. If you are adding a new frame, just add it — do not clear first. If you need a clean slate for your work only, create a new frame with a specific name and leave all others untouched.
 
 ### editorctl canvas commands (use these first)
 
 \`\`\`bash
 editorctl canvas-frames                              # list all frames (id, name, mode, w, h)
-editorctl canvas-add-frame <name> <w> <h> [mode]    # mode: html|paperjs|matterjs
+editorctl canvas-add-frame <name> <w> <h> [mode]    # mode: paperjs|matterjs|html (default: paperjs)
 editorctl canvas-run-paperjs <frameId> "<script>"   # set Paper.js script on frame
 editorctl canvas-run-matterjs <frameId> "<scene>"   # set Matter.js scene on frame
 editorctl canvas-update-frame <frameId> [name=X] [width=N] [height=N]
-editorctl canvas-delete-frame <frameId>
-editorctl canvas-clear
+editorctl canvas-loading "msg"                       # show per-frame loading overlay
+editorctl canvas-done                                # clear loading overlay
 editorctl canvas-set-zoom <zoom>                     # e.g. 0.5, 1.0, 2.0
+# ❌ canvas-delete-frame and canvas-clear — ONLY if user explicitly asks
+\`\`\`
+
+### HTTP bridge canvas commands (fallback when editorctl unavailable)
+
+\`\`\`bash
+# List frames
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_get_frames"}'
+# Add frame
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_add_frame","args":{"name":"My Frame","width":1280,"height":720,"mode":"paperjs"}}'
+# Run Paper.js script (requires frameId from canvas_get_frames)
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_run_paperjs","args":{"frameId":"<id>","script":"..."}}'
+# Run Matter.js scene
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_run_matterjs","args":{"frameId":"<id>","script":"..."}}'
+# Show/hide loading overlay
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_loading","args":{"message":"Drawing..."}}'
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_done"}'
 \`\`\`
 
 ### MCP canvas tools
 
 \`\`\`
 canvas_get_frames         — list all frames (id, name, mode, w, h, hasContent)
-canvas_add_frame          — create frame with name/width/height/mode
+canvas_add_frame          — create frame with name/width/height/mode (paperjs|matterjs|html)
 canvas_run_paperjs        — set ANY Paper.js script on a frame
 canvas_run_matterjs       — set ANY Matter.js scene on a frame
 canvas_update_frame       — update name, size, html, or script
-canvas_delete_frame       — delete frame by ID
+canvas_delete_frame       — ❌ ONLY if user explicitly asks
 canvas_paperjs_draw_shape — generate Paper.js snippet: circle/rect/star/polygon
 canvas_paperjs_draw_text  — generate Paper.js styled PointText snippet
 canvas_paperjs_animate    — generate Paper.js onFrame animation snippet
 canvas_matterjs_scene     — generate full Matter.js scene: ballpit/chain/stack/pendulum/ragdoll
 canvas_matterjs_add_bodies— generate code to append bodies to existing scene
-canvas_clear_canvas       — remove all frames
+canvas_clear_canvas       — ❌ ONLY if user explicitly asks
 canvas_set_zoom           — set viewport zoom (0.05–8.0)
 \`\`\`
 
@@ -521,13 +568,16 @@ editorctl import /absolute/path/to/out.mp4
 \``
 }
 
-function buildClaudeBody(): string {
+function buildClaudeBody(binDir?: string): string {
+  const editorctlFallback = binDir
+    ? `\nIf \`editorctl\` is not found, try the full path: \`"${binDir}/editorctl" get-state\`\n`
+    : ''
   return `# ⚠️ MONET AI EDITOR — READ BEFORE DOING ANYTHING
 
 You are inside the Monet AI video editor. ALL creative and media tasks go through Monet's tools.
 Do NOT use the AI SDK, Gemini, Anthropic SDK, or any external image/video generation library directly.
 Run \`editorctl get-state\` first — every turn — to see where the user is.
-
+${editorctlFallback}
 ## Step 1 — run at the start of EVERY reply turn, not just once
 
 The user can switch between Video Editor and Monet Canvas at any time during the conversation.
@@ -543,13 +593,14 @@ Read the \`activeView\` field. It decides everything below.
 
 ## If activeView is "canvas"
 
-You are in the **Monet Canvas** drawing board. The user wants something drawn live on the canvas, not a file.
+You are in the **Monet Canvas** board. The user wants live work inside the canvas, not the video timeline.
 
 **What to do:**
-1. Ask the user — in plain language, no jargon — before doing anything:
-   *"Do you want me to draw this directly on the canvas (live, editable code), or generate it as an image using GPT image generation (photo/illustration saved as a file)?"*
-2. If they say draw → use \`editorctl canvas-loading "…"\`, then \`canvas-add-frame\` + \`canvas-run-paperjs\` / \`canvas-run-matterjs\`, then \`editorctl canvas-done\`
-3. If they say photo/image → use \`editorctl generate-image\`
+1. Ask the user — before doing anything — which of the THREE options they want:
+   *"Which would you like? (1) Paper.js — code drawing with vector graphics, (2) Matter.js — physics and animation, (3) GPT image 2 — AI-generated image"*
+2. If they say Paper.js → use \`editorctl canvas-loading "…"\`, then \`canvas-add-frame <name> <w> <h> paperjs\` + \`canvas-run-paperjs\`, then \`editorctl canvas-done\`
+3. If they say Matter.js → use \`editorctl canvas-loading "…"\`, then \`canvas-add-frame <name> <w> <h> matterjs\` + \`canvas-run-matterjs\`, then \`editorctl canvas-done\`
+4. If they say image/GPT → use \`editorctl generate-image "<prompt>"\`, then \`editorctl canvas-add-image "<outputPath>"\`
 
 **What NOT to do in canvas mode:**
 - ❌ Do NOT use Remotion (npx remotion render, video_editor_render_remotion, etc.) — Remotion makes video files for the timeline, not canvas frames
@@ -579,18 +630,45 @@ You are in the **Video Editor** timeline view. Work on clips, tracks, assets, se
 
 ---
 
-## Canvas mode — draw vs. generate
+## Canvas mode — which of the three options
 
-When \`activeView\` is \`"canvas"\` and the user asks you to "generate", "create", "draw", or "make" something visual, **always ask first before doing anything**:
+When \`activeView\` is \`"canvas"\` and the user asks for something visual, **always ask first**:
 
-*"Quick question before I start — do you want me to **draw this in code** directly on the canvas (shapes, animation, physics — fully editable), or **generate it as an image using GPT image generation** (AI-rendered photo/illustration that gets imported into your timeline)?"*
+*"Which would you like? (1) Paper.js — code drawing with vector graphics, (2) Matter.js — physics and animation, (3) GPT image 2 — AI-generated image"*
 
-- Draw / code / canvas / animate → \`canvas_run_paperjs\` or \`canvas_run_matterjs\`
-- Photo / image / realistic / GPT / timeline → \`generate_image\` or \`editorctl generate-image\`
-- If unclear → draw in canvas, tell the user, offer to swap.
+- Paper.js / draw / code / vector / animate → \`canvas_run_paperjs\`
+- Matter.js / physics / bounce / simulation → \`canvas_run_matterjs\`
+- Image / photo / GPT / AI image → \`generate_image\` or \`editorctl generate-image\` + \`canvas-add-image\`
+- If unclear → ask again. Do not assume.
 
-Never assume. Always ask first when in canvas mode.
+**FORBIDDEN:** Do NOT offer design layers, editable layers, Figma-style, or any design-mode variant. There is NO design mode.
 
+## ⚠️ CANVAS DESTRUCTION WARNING
+
+**NEVER run canvas_clear, canvas-clear, canvas_delete_frame, or canvas-delete-frame unless the user has explicitly asked you to delete or clear frames.** These wipe the user's existing work permanently. When adding a new frame, just add it — do not clear first.
+
+## HTTP bridge canvas commands (use when editorctl not available)
+
+\`\`\`bash
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_get_frames"}'
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_add_frame","args":{"name":"Ad Frame","width":1280,"height":720,"mode":"paperjs"}}'
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_run_paperjs","args":{"frameId":"<id>","script":"..."}}'
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_run_matterjs","args":{"frameId":"<id>","script":"..."}}'
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_loading","args":{"message":"Drawing..."}}'
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_done"}'
+\`\`\`
+
+## ⚠️ BRAND RULE — NO EXCEPTIONS
+
+If the user's message contains ANY URL or domain name, you MUST fetch brand tokens before writing any canvas code.
+
+\`\`\`bash
+curl -sL "<url>" | grep -Eo '(#[0-9a-fA-F]{3,8}|font-family:[^;"}]+|font-size:[^;"}]+|border-radius:[^;"}]+)' | sort -u | head -60
+curl -sL "<url>" | grep -Eo '(src|href)="[^"]*logo[^"]*"' | head -10
+curl -sL "<url>" | grep 'og:image'
+\`\`\`
+
+Extract background colors, primary/accent colors, text colors, fonts, and logo. Hard-code those exact values — never guess brand colors. If the fetch fails, ask the user to paste the hex values.
 
 ## Remotion — React video composition (editor mode ONLY)
 
@@ -622,14 +700,17 @@ Batch AI: \`batch-selects "<query>" [limit] [padding] [sequenceName]\` · \`batc
 
 Misc: \`activate-sequence <seqId>\` · \`rename-clip <clipId> <label>\` · \`ripple-insert-gap <time> <duration>\` · \`remove-marker <markerId>\` · \`get-asset-segments <assetId>\` · \`set-playhead <time>\` · \`select-clip <clipId|none>\`
 
-Canvas: \`canvas-frames\` · \`canvas-add-frame\` · \`canvas-run-paperjs\` · \`canvas-run-matterjs\` · \`canvas-loading "msg"\` · \`canvas-done\`
+Canvas: \`canvas-frames\` · \`canvas-add-frame <name> <w> <h> paperjs|matterjs|html\` · \`canvas-run-paperjs\` · \`canvas-run-matterjs\` · \`canvas-loading "msg"\` · \`canvas-done\`
 
 API bridge only (no editorctl): undo, redo, embed-assets — POST to http://localhost:51847 with \`{"command":"undo"}\`
 `
 }
 
 
-function buildAgentsBody(): string {
+function buildAgentsBody(binDir?: string): string {
+  const editorctlFallback = binDir
+    ? `\nIf \`editorctl\` is not found (exit 127), use the full path: \`"${binDir}/editorctl"\`\n`
+    : ''
   return `# Monet
 
 ## Step 1 — run at the start of EVERY reply turn, without exception
@@ -640,7 +721,7 @@ The user can switch views mid-conversation. \`activeView\` changes when they do.
 \`\`\`bash
 editorctl get-state
 \`\`\`
-
+${editorctlFallback}
 Check \`activeView\` in the output.
 
 ---
@@ -653,15 +734,37 @@ Do NOT use Remotion. Do NOT use \`editorctl import\` for canvas output.
 1. \`editorctl generate-image "<prompt>"\` → get outputPath from result
 2. \`editorctl canvas-add-image "<outputPath>"\` → shows in canvas AND video editor media
 
-Ask the user first (plain language, no library names):
-*"Do you want me to draw this on the canvas (live, editable code) or generate it as an image using GPT image generation?"*
+Ask the user first — present EXACTLY these three options:
+*"Which would you like? (1) Paper.js — code drawing with vector graphics, (2) Matter.js — physics and animation, (3) GPT image 2 — AI-generated image"*
 
-If drawing:
+**FORBIDDEN:** Do NOT offer design layers, editable layers, Figma-style, or any design-mode variant. There is NO design mode.
+
+**BRAND RULE — NO EXCEPTIONS:** If the user's message contains ANY URL or domain name, fetch brand tokens BEFORE writing any canvas code:
+\`\`\`bash
+curl -sL "<url>" | grep -Eo '(#[0-9a-fA-F]{3,8}|font-family:[^;"}]+|font-size:[^;"}]+|border-radius:[^;"}]+)' | sort -u | head -60
+curl -sL "<url>" | grep -Eo '(src|href)="[^"]*logo[^"]*"' | head -10
+curl -sL "<url>" | grep 'og:image'
+\`\`\`
+Extract colors, fonts, and logo. Hard-code exact values — never assume brand colors. If fetch fails, ask user to paste hex values.
+
+**⚠️ DESTRUCTION WARNING: NEVER run canvas_clear, canvas-clear, canvas_delete_frame, or canvas-delete-frame unless the user explicitly asked you to delete/clear. These destroy all existing user work.**
+
+If drawing with editorctl:
 \`\`\`bash
 editorctl canvas-loading "Drawing…"
-editorctl canvas-add-frame "My Frame" 1280 720 paperjs   # or matterjs or html
-editorctl canvas-run-paperjs <frameId> "<script>"
+editorctl canvas-add-frame "My Frame" 1280 720 paperjs   # or matterjs
+editorctl canvas-run-paperjs <frameId> "<script>"        # or canvas-run-matterjs
 editorctl canvas-done
+\`\`\`
+
+If editorctl is unavailable, fall back to the HTTP bridge:
+\`\`\`bash
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_loading","args":{"message":"Drawing..."}}'
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_add_frame","args":{"name":"My Frame","width":1280,"height":720,"mode":"paperjs"}}'
+# get frameId from response or canvas_get_frames
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_get_frames"}'
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_run_paperjs","args":{"frameId":"<id>","script":"..."}}'
+curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"canvas_done"}'
 \`\`\`
 
 **Remotion is for the video editor timeline ONLY. Never use npx remotion or video_editor_render_remotion when activeView is "canvas".**
@@ -670,7 +773,7 @@ editorctl canvas-done
 
 ## activeView: "editor" → work on the video timeline
 
-Canvas: \`canvas-frames\` · \`canvas-add-frame\` · \`canvas-run-paperjs\` · \`canvas-run-matterjs\` · \`canvas-loading "msg"\` · \`canvas-done\`
+Canvas: \`canvas-frames\` · \`canvas-add-frame <name> <w> <h> paperjs|matterjs|html\` · \`canvas-run-paperjs\` · \`canvas-run-matterjs\` · \`canvas-loading "msg"\` · \`canvas-done\`
 
 Clips: \`add-clip\` · \`move-clip\` · \`trim-clip\` · \`split-clip\` · \`duplicate-clip\` · \`rename-clip\` · \`remove-clip\` · \`ripple-delete-clip\` · \`ripple-insert-gap <time> <duration>\`
 

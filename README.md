@@ -173,6 +173,12 @@ On first launch, Monet asks for:
 
 Claude Code and Codex installation help is shown next to the terminal when needed, instead of blocking onboarding.
 
+### Codex sandbox
+
+Monet's embedded terminal automatically launches Codex with `-s danger-full-access` so that `editorctl` can reach the live app API on `localhost:51847`. Without this flag, Codex's default `read-only` sandbox blocks outbound localhost connections and every `editorctl` command falls back to file mode.
+
+This flag is injected by Monet's wrapper script (written to `userData/bin/codex` on each terminal start) and **only applies when Codex is launched from inside Monet**. Codex sessions started from any other terminal are unaffected.
+
 ## What Agents Can Do
 
 Through the embedded terminal, `editorctl`, API bridge, and MCP surfaces, agents can operate **both** the video editor and the design canvas.
@@ -193,7 +199,7 @@ Through the embedded terminal, `editorctl`, API bridge, and MCP surfaces, agents
 
 ### Monet Canvas
 
-- create artboard frames in `html`, `paperjs`, or `matterjs` mode
+- create artboard frames in `paperjs`, `matterjs`, or `html` mode
 - run any Paper.js script (vector graphics, animation, generative art)
 - run any Matter.js scene (2D physics simulations)
 - inject inline HTML/CSS/JS for arbitrary web-native designs
@@ -220,7 +226,8 @@ editorctl get-state
 editorctl search-segments "terminal workflow"
 editorctl export /tmp/monet-export.mp4 high 1080p mp4
 
-# Canvas — draw a Spider-Verse glitch with Paper.js
+# Canvas — Paper.js, Matter.js, or raw HTML
+editorctl canvas-add-frame "Paper Layout" 1440 900 paperjs
 editorctl canvas-add-frame "Glitch" 1280 720 paperjs
 editorctl canvas-frames
 editorctl canvas-run-paperjs <id> "var c = new Path.Circle({ center: view.center, radius: 100, fillColor: '#7aa2f7' });"

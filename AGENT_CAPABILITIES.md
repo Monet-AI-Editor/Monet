@@ -1,5 +1,25 @@
 # What Claude Can Do in This Video Editor
 
+## ⚠️ CANVAS MODE — MANDATORY RULES (read this first)
+
+When `activeView=canvas` is reported by the hook or `editorctl get-state`:
+
+**There are EXACTLY 3 canvas options. No others exist.**
+1. **Paper.js** — code drawing with vector graphics (`canvas-run-paperjs`)
+2. **Matter.js** — physics and animation (`canvas-run-matterjs`)
+3. **GPT image 2** — AI-generated image (`generate-image` + `canvas-add-image`)
+
+**REMOVED — do NOT offer these under any name:**
+- ~~Design mode~~ — removed
+- ~~Editable layers~~ — removed
+- ~~Figma-style layout~~ — removed
+- ~~Node-based design~~ — removed
+- ~~Direct canvas design~~ — removed
+
+When the user asks for something visual in canvas mode, present ONLY these three options using these EXACT labels. Copy them verbatim. Do not invent a fourth option or rephrase option 1 as anything design-related.
+
+---
+
 ## 🎬 Complete Professional Video Editing Control
 
 I now have **full control** of a professional-grade video editor through three interfaces:
@@ -90,6 +110,42 @@ Because I'm running inside the app's terminal with PTY access:
 - I can **use the app** (edit videos, apply effects)
 - I can **test changes instantly** (make changes, rebuild, verify)
 - I have **full environment access** (FFmpeg, Node.js, file system)
+
+## Brand Aesthetic from a URL
+
+> **MANDATORY — NO EXCEPTIONS**: Any URL or domain in the user's message triggers a required fetch step. Run the commands below, extract the brand tokens, and only then write canvas/design code. Do not use assumed or memorized brand colors even for well-known brands. If the fetch fails, ask the user for the hex values — never guess.
+
+```bash
+# Extract CSS tokens
+curl -sL "<url>" | grep -Eo '(#[0-9a-fA-F]{3,8}|font-family:[^;"}]+|font-size:[^;"}]+|border-radius:[^;"}]+)' | sort -u | head -60
+# Find logo
+curl -sL "<url>" | grep -Eo '(src|href)="[^"]*logo[^"]*"' | head -10
+curl -sL "<url>" | grep 'og:image'
+```
+
+Pull out: background/surface colors, primary/accent colors, text colors, font families, font sizes, border radii, spacing, shadows, and the logo. Use those exact values — never substitute defaults. See `CLAUDE.md` for the full extraction table and logo guidance.
+
+---
+
+## Canvas — Matter.js & Paper.js Frames
+
+Live interactive frames can be placed on the canvas using physics (Matter.js) or vector graphics (Paper.js).
+
+```bash
+editorctl canvas-add-frame "My Frame" 390 844 matterjs   # create a Matter.js frame
+editorctl canvas-run-matterjs <frameId> "<script>"        # apply/update the physics script
+editorctl canvas-frames                                    # list all frame IDs
+editorctl canvas-done                                      # dismiss loading overlay
+```
+
+### Matter.js script rules (violations produce a blank canvas)
+1. **Use `document.querySelector('canvas')`** — never `element: document.body` in `Render.create`; that spawns an invisible second canvas.
+2. **`Runner.run(Runner.create(), engine)`** — always two arguments; single-arg form does nothing in 0.20.0.
+3. **Self-contained scripts** (own engine + rAF loop): declare your own `const engine`, drive with `Engine.update()` + `requestAnimationFrame`. Do NOT also call `Render.run`/`Runner.run`.
+4. **Body-only scripts** (use template's engine): do NOT declare `const engine`, `let engine`, or `const { Engine } = Matter` — the template pre-declares these with `var`; redeclaring with `const`/`let` is a SyntaxError.
+5. **Never mix patterns** — a script that both borrows template globals AND calls `Render.run` will double-loop and appear frozen.
+
+See `SKILL.md` → _Canvas — Matter.js Physics Frames_ for full examples and `CLAUDE.md` for the authoritative pattern reference.
 
 ## Remotion — React Video Composition
 

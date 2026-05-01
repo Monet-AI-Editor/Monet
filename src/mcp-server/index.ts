@@ -502,14 +502,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'canvas_add_frame',
-        description: 'Add a new canvas frame. mode can be html, paperjs, or matterjs.',
+        description: 'Add a new canvas frame. mode must be paperjs, matterjs, or html.',
         inputSchema: {
           type: 'object',
           properties: {
             name:   { type: 'string', description: 'Frame name' },
             width:  { type: 'number', description: 'Frame width in pixels (default 1280)' },
             height: { type: 'number', description: 'Frame height in pixels (default 720)' },
-            mode:   { type: 'string', enum: ['html', 'paperjs', 'matterjs'], description: 'Frame mode (default html)' },
+            mode:   { type: 'string', enum: ['paperjs', 'matterjs', 'html'], description: 'Frame mode (default paperjs)' },
             html:   { type: 'string', description: 'HTML content (for html mode)' },
             script: { type: 'string', description: 'Script content (for paperjs or matterjs mode)' }
           },
@@ -526,7 +526,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             name:   { type: 'string', description: 'New frame name' },
             width:  { type: 'number', description: 'New frame width in pixels' },
             height: { type: 'number', description: 'New frame height in pixels' },
-            mode:   { type: 'string', enum: ['html', 'paperjs', 'matterjs'], description: 'Frame mode' },
+            mode:   { type: 'string', enum: ['paperjs', 'matterjs', 'html'], description: 'Frame mode' },
             html:   { type: 'string', description: 'HTML content (for html mode)' },
             script: { type: 'string', description: 'Script content (for paperjs/matterjs mode)' }
           },
@@ -1343,11 +1343,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'canvas_add_frame': {
-        const { name, width = 1280, height = 720, mode = 'html', html = '', script = '' } = args as {
+        const { name, width = 1280, height = 720, mode = 'paperjs', html = '', script = '' } = args as {
           name: string; width?: number; height?: number; mode?: string; html?: string; script?: string
         }
-        await callLiveApp('canvas-add-frame', { name, width, height, mode, html, script })
-        return { content: [{ type: 'text', text: `Added ${mode} frame "${name}" (${width}×${height})` }] }
+        const safeMode = (mode === 'paperjs' || mode === 'matterjs' || mode === 'html') ? mode : 'paperjs'
+        await callLiveApp('canvas-add-frame', { name, width, height, mode: safeMode, html, script })
+        return { content: [{ type: 'text', text: `Added ${safeMode} frame "${name}" (${width}×${height})` }] }
       }
 
       case 'canvas_update_frame': {

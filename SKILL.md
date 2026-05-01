@@ -1,5 +1,25 @@
 # AI Video Editor — Agent Control Reference
 
+## ⚠️ CANVAS MODE — MANDATORY RULES (read this first)
+
+When `activeView=canvas` is reported by the hook or `editorctl get-state`:
+
+**There are EXACTLY 3 canvas options. No others exist.**
+1. **Paper.js** — code drawing with vector graphics (`canvas-run-paperjs`)
+2. **Matter.js** — physics and animation (`canvas-run-matterjs`)
+3. **GPT image 2** — AI-generated image (`generate-image` + `canvas-add-image`)
+
+**REMOVED — do NOT offer these under any name:**
+- ~~Design mode~~ — removed
+- ~~Editable layers~~ — removed
+- ~~Figma-style layout~~ — removed
+- ~~Node-based design~~ — removed
+- ~~Direct canvas design~~ — removed
+
+When the user asks for something visual in canvas mode, present ONLY these three options using these EXACT labels. Copy them verbatim. Do not invent a fourth option or rephrase option 1 as anything design-related.
+
+---
+
 **API Bridge:** `POST http://localhost:51847` — JSON body `{"command":"<name>","args":{...}}`
 
 ```python
@@ -105,6 +125,87 @@ call("help")   # → full command list
 - When building a spoken highlight cut, move video, audio, captions, and markers together. Do not leave captions or markers on old timings after tightening the edit.
 - If playback appears to stop between clips, inspect the timeline first for empty gaps before assuming the preview player is broken.
 - Prefer exact target starts over cumulative offset math when tightening a cut. Recompute each clip's intended `startTime` from the cut plan.
+
+---
+
+## Brand Aesthetic from a URL
+
+> **MANDATORY — NO EXCEPTIONS**: If the user's message contains any URL or domain, you MUST run the fetch commands below and extract brand tokens before writing any canvas/design code. Do not use assumed or memorized brand colors. Fetch first, design second — every time. If the fetch fails, ask the user to paste the hex values; never fall back to guessing.
+
+```bash
+curl -sL "<url>" | grep -Eo '(#[0-9a-fA-F]{3,8}|font-family:[^;"}]+|font-size:[^;"}]+|border-radius:[^;"}]+)' | sort -u | head -60
+```
+
+Extract: background colors, surface colors, primary/accent colors, text colors, font families, font sizes/weights, border radii, spacing, and box-shadows. Also find the logo — it's the ground truth for brand colors and visual tone. Hard-code those exact values — never guess when a real URL is available.
+
+```bash
+# Find logo
+curl -sL "<url>" | grep -Eo '(src|href)="[^"]*logo[^"]*"' | head -10
+curl -sL "<url>" | grep 'og:image'
+```
+
+---
+
+## Canvas — Matter.js Physics Frames
+
+Use `canvas_run_matterjs` to place a live interactive physics scene on the canvas.
+
+### MCP tools
+| Tool | Args |
+|------|------|
+| `canvas_run_matterjs` | `id?` (frame id to update), `name?`, `script` (JS string), `width?`, `height?` |
+| `canvas_add_frame` | `name`, `width`, `height`, `mode: 'matterjs'` |
+| `canvas_matterjs_scene` | `style` (balls/stacks/pendulum/bridge/ragdoll), `gravity?`, `count?`, `colors?` |
+| `canvas_frames` | — → `{frames: [{id, name, mode, width, height}]}` |
+
+### Script patterns — pick ONE
+
+**Pattern A — Self-contained (rich UIs, custom 2D drawing, rAF loop)**
+```js
+const { Engine, Bodies, Composite, Mouse, MouseConstraint, Events } = Matter;
+const W = 390, H = 844;
+const engine = Engine.create({ gravity: { y: 1.5 } });
+const canvas = document.querySelector('canvas'); // ← always use this; never create a new one
+canvas.width = W; canvas.height = H;
+const ctx = canvas.getContext('2d');
+// ... add bodies, set up mouse ...
+function loop() {
+  Engine.update(engine, 1000/60);
+  ctx.fillStyle = '#121212'; ctx.fillRect(0, 0, W, H);
+  // draw with ctx
+  requestAnimationFrame(loop);
+}
+loop();
+```
+
+**Pattern B — Bodies only (template manages engine/render/runner)**
+```js
+// engine, render, width, height, and all Matter vars are already declared — do NOT redeclare them
+var ground = Bodies.rectangle(width/2, height+25, width, 50, { isStatic: true, render: { fillStyle: '#334155' } });
+var ball = Bodies.circle(width/2, 50, 30, { restitution: 0.8, render: { fillStyle: '#5b82f7' } });
+Composite.add(engine.world, [ground, ball]);
+engine.gravity.y = 1;
+// Runner.run and Render.run are called automatically after this script — do not call them here
+```
+
+### Critical rules
+
+- **`Runner.run` needs two args**: `Runner.run(Runner.create(), engine)` — single-arg `Runner.run(engine)` silently does nothing in Matter.js 0.20.0
+- **Never `element: document.body`** in `Render.create` — spawns an invisible second canvas; use `canvas: document.querySelector('canvas')` instead
+- **Never declare `const engine` or `let engine` in Pattern B** — the template already has `var engine`; redeclaring with `const`/`let` causes a SyntaxError that silently blanks the canvas
+- **Never call `Render.run` / `Runner.run` in Pattern B** — the template does this after your script runs; calling them twice causes double-speed or broken rendering
+- **Never import or redeclare Matter vars in Pattern B** — `Engine`, `Bodies`, `Composite`, etc. are already destructured; `const { Engine } = Matter` will SyntaxError
+
+### Pattern B available globals
+`engine` · `render` · `width` · `height` · `Engine` · `Render` · `Runner` · `Bodies` · `Composite` · `World` · `Body` · `Events` · `Constraint` · `Mouse` · `MouseConstraint`
+
+### CLI
+```bash
+editorctl canvas-add-frame "Name" 390 844 matterjs
+editorctl canvas-run-matterjs <frameId> "$(cat script.js)"
+editorctl canvas-frames
+editorctl canvas-done
+```
 
 ---
 

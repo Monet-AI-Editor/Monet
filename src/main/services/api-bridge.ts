@@ -21,6 +21,742 @@ const PORT_FILE = join(tmpdir(), 'monet-api-port')
 const BASE_PORT = 51847
 const MAX_PORT = 51857
 
+type CanvasDesignNode = {
+  type?: unknown
+  text?: unknown
+  children?: unknown
+}
+
+type CanvasDesignDocument = {
+  background?: unknown
+  nodes?: unknown
+  page?: unknown
+  theme?: unknown
+  renderMode?: unknown
+  components?: unknown
+}
+
+type SemanticCanvasSection = {
+  type?: unknown
+  id?: unknown
+  component?: unknown
+  label?: unknown
+  title?: unknown
+  subtitle?: unknown
+  description?: unknown
+  eyebrow?: unknown
+  badge?: unknown
+  price?: unknown
+  secondaryPrice?: unknown
+  rating?: unknown
+  reviewCount?: unknown
+  primary?: unknown
+  secondary?: unknown
+  mediaLabel?: unknown
+  items?: unknown
+  details?: unknown
+  children?: unknown
+  columns?: unknown
+  stats?: unknown
+  links?: unknown
+}
+
+type SemanticCanvasPage = {
+  padding?: unknown
+  gap?: unknown
+  sections?: unknown
+  renderMode?: unknown
+}
+
+type SemanticCanvasComponent = {
+  type?: unknown
+  title?: unknown
+  subtitle?: unknown
+  description?: unknown
+  eyebrow?: unknown
+  badge?: unknown
+  price?: unknown
+  secondaryPrice?: unknown
+  rating?: unknown
+  reviewCount?: unknown
+  primary?: unknown
+  secondary?: unknown
+  mediaLabel?: unknown
+  items?: unknown
+  details?: unknown
+  children?: unknown
+  columns?: unknown
+  stats?: unknown
+  links?: unknown
+}
+
+type SemanticCanvasTheme = {
+  background?: unknown
+  surface?: unknown
+  surfaceMuted?: unknown
+  border?: unknown
+  textPrimary?: unknown
+  textSecondary?: unknown
+  textMuted?: unknown
+  accent?: unknown
+  accentSoft?: unknown
+  danger?: unknown
+}
+
+type BasicDesignNode = Record<string, unknown>
+type ResolvedCanvasTheme = {
+  background: string
+  surface: string
+  surfaceMuted: string
+  border: string
+  textPrimary: string
+  textSecondary: string
+  textMuted: string
+  accent: string
+  accentSoft: string
+  danger: string
+}
+
+type SemanticCanvasCompileOptions = {
+  components: Record<string, SemanticCanvasComponent>
+}
+
+function clampCanvasNumber(value: unknown, fallback: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, typeof value === 'number' && Number.isFinite(value) ? value : fallback))
+}
+
+function canvasTextNode(text: string, overrides: Record<string, unknown> = {}): BasicDesignNode {
+  return {
+    type: 'text',
+    name: 'Text',
+    text,
+    width: 320,
+    height: 56,
+    fontSize: 18,
+    fontWeight: 500,
+    fill: '#f8fafc',
+    align: 'left',
+    sizing: 'hug',
+    ...overrides
+  }
+}
+
+function canvasRectNode(name: string, overrides: Record<string, unknown> = {}): BasicDesignNode {
+  return {
+    type: 'rect',
+    name,
+    width: 120,
+    height: 44,
+    radius: 16,
+    fill: '#1f2937',
+    stroke: '#334155',
+    strokeWidth: 0,
+    ...overrides
+  }
+}
+
+function canvasStackNode(name: string, overrides: Record<string, unknown> = {}): BasicDesignNode {
+  return {
+    type: 'stack',
+    name,
+    width: 320,
+    height: 120,
+    direction: 'vertical',
+    gap: 16,
+    padding: 0,
+    alignItems: 'start',
+    justifyContent: 'start',
+    fill: 'transparent',
+    radius: 0,
+    stroke: '#334155',
+    strokeWidth: 0,
+    sizing: 'hug',
+    children: [],
+    ...overrides
+  }
+}
+
+function canvasGridNode(name: string, overrides: Record<string, unknown> = {}): BasicDesignNode {
+  return {
+    type: 'grid',
+    name,
+    width: 320,
+    height: 220,
+    columns: 2,
+    gap: 16,
+    padding: 0,
+    alignItems: 'start',
+    fill: 'transparent',
+    radius: 0,
+    stroke: '#334155',
+    strokeWidth: 0,
+    sizing: 'hug',
+    children: [],
+    ...overrides
+  }
+}
+
+function toCanvasString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
+}
+
+function toCanvasStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry) => toCanvasString(entry))
+    .filter(Boolean)
+}
+
+function escapeCanvasHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function resolveSemanticCanvasComponents(raw: unknown): Record<string, SemanticCanvasComponent> {
+  if (!raw || typeof raw !== 'object') return {}
+  const entries = Object.entries(raw as Record<string, unknown>)
+  const resolved: Record<string, SemanticCanvasComponent> = {}
+  for (const [name, value] of entries) {
+    if (!value || typeof value !== 'object') continue
+    resolved[name] = value as SemanticCanvasComponent
+  }
+  return resolved
+}
+
+function resolveCanvasTheme(theme: unknown, backgroundOverride: unknown): ResolvedCanvasTheme {
+  const raw = (theme && typeof theme === 'object' ? theme : {}) as SemanticCanvasTheme
+  return {
+    background: toCanvasString(backgroundOverride ?? raw.background, '#0a0a0a'),
+    surface: toCanvasString(raw.surface, '#0f172a'),
+    surfaceMuted: toCanvasString(raw.surfaceMuted, '#111827'),
+    border: toCanvasString(raw.border, '#1e293b'),
+    textPrimary: toCanvasString(raw.textPrimary, '#f8fafc'),
+    textSecondary: toCanvasString(raw.textSecondary, '#cbd5e1'),
+    textMuted: toCanvasString(raw.textMuted, '#94a3b8'),
+    accent: toCanvasString(raw.accent, '#ef4444'),
+    accentSoft: toCanvasString(raw.accentSoft, '#fecaca'),
+    danger: toCanvasString(raw.danger, '#f87171')
+  }
+}
+
+function resolveSemanticCanvasSection(
+  section: SemanticCanvasSection,
+  options: SemanticCanvasCompileOptions
+): SemanticCanvasSection {
+  const componentName = toCanvasString(section.component)
+  const component = componentName ? options.components[componentName] : undefined
+  if (!component) return section
+  return {
+    ...component,
+    ...section,
+    component: componentName,
+    type: toCanvasString(section.type, toCanvasString(component.type, 'section'))
+  }
+}
+
+function compileSemanticCanvasSection(
+  rawSection: SemanticCanvasSection,
+  width: number,
+  theme: ResolvedCanvasTheme,
+  options: SemanticCanvasCompileOptions
+): BasicDesignNode {
+  const section = resolveSemanticCanvasSection(rawSection, options)
+  const type = toCanvasString(section.type, 'section').toLowerCase()
+  if (type === 'nav') {
+    return canvasStackNode('Nav', {
+      direction: 'horizontal',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      sizing: 'fixed',
+      width,
+      height: 56,
+      children: [
+        canvasTextNode(toCanvasString(section.title, 'Brand'), { name: 'Brand', fontSize: 26, fontWeight: 700, fill: theme.textPrimary }),
+        canvasTextNode(toCanvasString(section.secondary, 'Menu'), { name: 'Action', fontSize: 14, fontWeight: 600, fill: theme.textSecondary })
+      ]
+    })
+  }
+
+  if (type === 'hero') {
+    const heroChildren: BasicDesignNode[] = []
+    const eyebrow = toCanvasString(section.eyebrow)
+    const badge = toCanvasString(section.badge)
+    if (eyebrow) heroChildren.push(canvasTextNode(eyebrow, { name: 'Eyebrow', fontSize: 12, fontWeight: 700, letterSpacing: 1.2, fill: theme.accent }))
+    if (badge) heroChildren.push(canvasTextNode(badge, { name: 'Badge', fontSize: 11, fontWeight: 700, fill: theme.accentSoft }))
+    heroChildren.push(canvasTextNode(toCanvasString(section.title, 'Headline'), { name: 'Headline', fontSize: 40, fontWeight: 800, width, sizing: 'fill', fill: theme.textPrimary }))
+    const subtitle = toCanvasString(section.subtitle || section.description)
+    if (subtitle) heroChildren.push(canvasTextNode(subtitle, { name: 'Subtitle', fontSize: 15, fontWeight: 400, fill: theme.textSecondary, width, sizing: 'fill' }))
+    heroChildren.push(canvasRectNode('Media', {
+      width,
+      height: 220,
+      radius: 28,
+      fill: theme.surfaceMuted,
+      stroke: theme.border,
+      strokeWidth: 1
+    }))
+    const mediaLabel = toCanvasString(section.mediaLabel)
+    if (mediaLabel) heroChildren.push(canvasTextNode(mediaLabel, { name: 'Media label', fontSize: 13, fontWeight: 600, fill: theme.textMuted }))
+    return canvasStackNode('Hero', {
+      width,
+      padding: 24,
+      gap: 14,
+      radius: 28,
+      fill: theme.surface,
+      stroke: theme.border,
+      strokeWidth: 1,
+      sizing: 'hug',
+      children: heroChildren
+    })
+  }
+
+  if (type === 'product-info') {
+    const infoChildren: BasicDesignNode[] = [
+      canvasTextNode(toCanvasString(section.title, 'Product Title'), { name: 'Title', fontSize: 32, fontWeight: 800, width, sizing: 'fill', fill: theme.textPrimary })
+    ]
+    const subtitle = toCanvasString(section.subtitle)
+    if (subtitle) infoChildren.push(canvasTextNode(subtitle, { name: 'Subtitle', fontSize: 15, fontWeight: 500, fill: theme.textMuted, width, sizing: 'fill' }))
+    const meta = [toCanvasString(section.rating), toCanvasString(section.reviewCount)].filter(Boolean).join(' · ')
+    if (meta) infoChildren.push(canvasTextNode(meta, { name: 'Rating', fontSize: 13, fontWeight: 600, fill: theme.accentSoft }))
+    const priceRow = canvasStackNode('Price Row', {
+      direction: 'horizontal',
+      gap: 10,
+      alignItems: 'end',
+      children: [
+        canvasTextNode(toCanvasString(section.price, '$0'), { name: 'Price', fontSize: 28, fontWeight: 800, fill: theme.textPrimary }),
+        ...(toCanvasString(section.secondaryPrice) ? [canvasTextNode(toCanvasString(section.secondaryPrice), { name: 'Secondary Price', fontSize: 14, fontWeight: 500, fill: theme.textMuted })] : [])
+      ]
+    })
+    infoChildren.push(priceRow)
+    if (Array.isArray(section.details) && section.details.length > 0) {
+      infoChildren.push(canvasStackNode('Details', {
+        gap: 8,
+        width,
+        children: section.details
+          .map((item) => toCanvasString(item))
+          .filter(Boolean)
+          .map((item) => canvasTextNode(item, { name: 'Detail', fontSize: 13, fontWeight: 500, fill: theme.textSecondary, width, sizing: 'fill' }))
+      }))
+    }
+    return canvasStackNode('Product Info', {
+      width,
+      gap: 12,
+      children: infoChildren
+    })
+  }
+
+  if (type === 'cta-row') {
+    return canvasStackNode('CTA Row', {
+      direction: 'horizontal',
+      gap: 12,
+      width,
+      children: [
+        canvasRectNode('Primary CTA', { width: Math.max(180, Math.round(width * 0.68)), height: 52, radius: 18, fill: '#ef4444' }),
+        canvasRectNode('Secondary CTA', { width: Math.max(56, Math.round(width * 0.18)), height: 52, radius: 18, fill: '#1f2937', stroke: '#334155', strokeWidth: 1 }),
+        canvasTextNode(toCanvasString(section.primary, 'Primary Action'), { name: 'Primary Label', fontSize: 15, fontWeight: 700, fill: '#ffffff' }),
+        ...(toCanvasString(section.secondary) ? [canvasTextNode(toCanvasString(section.secondary), { name: 'Secondary Label', fontSize: 14, fontWeight: 600, fill: '#e2e8f0' })] : [])
+      ]
+    })
+  }
+
+  if (type === 'card-list' || type === 'list') {
+    const items = Array.isArray(section.items) ? section.items : []
+    return canvasGridNode('List', {
+      width,
+      columns: clampCanvasNumber(section.columns, width <= 480 ? 1 : 2, 1, 4),
+      gap: 12,
+      children: items.slice(0, 6).map((item, index) => {
+        const record = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+        return canvasStackNode(`Card ${index + 1}`, {
+          width,
+          padding: 18,
+          gap: 8,
+          radius: 22,
+          fill: theme.surfaceMuted,
+          stroke: theme.border,
+          strokeWidth: 1,
+          children: [
+            canvasTextNode(toCanvasString(record.title, `Item ${index + 1}`), { name: 'Card Title', fontSize: 17, fontWeight: 700, width, sizing: 'fill', fill: theme.textPrimary }),
+            ...(toCanvasString(record.subtitle) ? [canvasTextNode(toCanvasString(record.subtitle), { name: 'Card Subtitle', fontSize: 13, fontWeight: 500, fill: theme.textSecondary, width, sizing: 'fill' })] : []),
+            ...(toCanvasString(record.meta) ? [canvasTextNode(toCanvasString(record.meta), { name: 'Card Meta', fontSize: 12, fontWeight: 500, fill: theme.textMuted })] : [])
+          ]
+        })
+      })
+    })
+  }
+
+  if (type === 'metric-row' || type === 'stats') {
+    const stats = Array.isArray(section.stats) ? section.stats : []
+    return canvasGridNode('Stats', {
+      width,
+      columns: clampCanvasNumber(section.columns, stats.length >= 4 ? 4 : Math.max(1, stats.length || 3), 1, 4),
+      gap: 12,
+      children: stats.slice(0, 6).map((item, index) => {
+        const record = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+        return canvasStackNode(`Stat ${index + 1}`, {
+          padding: 16,
+          gap: 6,
+          radius: 18,
+          fill: theme.surfaceMuted,
+          stroke: theme.border,
+          strokeWidth: 1,
+          children: [
+            canvasTextNode(toCanvasString(record.value, `0${index + 1}`), { name: 'Value', fontSize: 24, fontWeight: 800, fill: theme.textPrimary }),
+            canvasTextNode(toCanvasString(record.label, `Metric ${index + 1}`), { name: 'Label', fontSize: 12, fontWeight: 500, fill: theme.textMuted })
+          ]
+        })
+      })
+    })
+  }
+
+  if (type === 'button-group') {
+    const labels = [toCanvasString(section.primary, 'Primary action'), toCanvasString(section.secondary)]
+      .filter(Boolean)
+    return canvasStackNode('Button Group', {
+      direction: width <= 480 ? 'vertical' : 'horizontal',
+      width,
+      gap: 12,
+      children: labels.map((label, index) => canvasStackNode(`Button ${index + 1}`, {
+        direction: 'horizontal',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: width <= 480 ? width : Math.max(180, Math.round(width * 0.3)),
+        height: 52,
+        padding: 16,
+        radius: 18,
+        fill: index === 0 ? theme.accent : theme.surfaceMuted,
+        stroke: index === 0 ? theme.accent : theme.border,
+        strokeWidth: index === 0 ? 0 : 1,
+        sizing: width <= 480 ? 'fill' : 'fixed',
+        children: [
+          canvasTextNode(label, { name: 'Label', fontSize: 15, fontWeight: 700, fill: index === 0 ? '#ffffff' : theme.textPrimary })
+        ]
+      }))
+    })
+  }
+
+  if (type === 'feature-grid') {
+    const items = Array.isArray(section.items) ? section.items : []
+    return canvasGridNode('Feature Grid', {
+      width,
+      columns: clampCanvasNumber(section.columns, width <= 640 ? 1 : 2, 1, 3),
+      gap: 14,
+      children: items.slice(0, 6).map((item, index) => {
+        const record = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+        return canvasStackNode(`Feature ${index + 1}`, {
+          padding: 18,
+          gap: 8,
+          radius: 22,
+          fill: theme.surfaceMuted,
+          stroke: theme.border,
+          strokeWidth: 1,
+          children: [
+            canvasTextNode(toCanvasString(record.title, `Feature ${index + 1}`), { name: 'Feature Title', fontSize: 17, fontWeight: 700, fill: theme.textPrimary, width, sizing: 'fill' }),
+            ...(toCanvasString(record.description || record.subtitle) ? [canvasTextNode(toCanvasString(record.description || record.subtitle), { name: 'Feature Copy', fontSize: 13, fontWeight: 400, fill: theme.textSecondary, width, sizing: 'fill' })] : [])
+          ]
+        })
+      })
+    })
+  }
+
+  if (type === 'footer') {
+    const links = toCanvasStringList(section.links)
+    return canvasStackNode('Footer', {
+      width,
+      gap: 12,
+      padding: 20,
+      radius: 20,
+      fill: theme.surface,
+      stroke: theme.border,
+      strokeWidth: 1,
+      children: [
+        ...(toCanvasString(section.title) ? [canvasTextNode(toCanvasString(section.title), { name: 'Footer Title', fontSize: 14, fontWeight: 700, fill: theme.textPrimary })] : []),
+        ...(links.length > 0 ? [canvasStackNode('Footer Links', {
+          direction: width <= 480 ? 'vertical' : 'horizontal',
+          gap: 12,
+          children: links.map((link) => canvasTextNode(link, { name: 'Footer Link', fontSize: 12, fontWeight: 500, fill: theme.textMuted }))
+        })] : [])
+      ]
+    })
+  }
+
+  if (type === 'component-group') {
+    const children = Array.isArray(section.children) ? section.children as SemanticCanvasSection[] : []
+    return canvasStackNode(toCanvasString(section.label, 'Component Group'), {
+      width,
+      gap: 16,
+      children: children.map((child) => compileSemanticCanvasSection(child, width, theme, options))
+    })
+  }
+
+  return canvasStackNode('Section', {
+    width,
+    gap: 10,
+    children: [
+      ...(toCanvasString(section.title) ? [canvasTextNode(toCanvasString(section.title), { name: 'Section Title', fontSize: 24, fontWeight: 700, width, sizing: 'fill', fill: theme.textPrimary })] : []),
+      ...(toCanvasString(section.subtitle || section.description) ? [canvasTextNode(toCanvasString(section.subtitle || section.description), { name: 'Section Copy', fontSize: 14, fontWeight: 400, fill: theme.textSecondary, width, sizing: 'fill' })] : []),
+      ...(Array.isArray(section.children)
+        ? (section.children as SemanticCanvasSection[]).map((child, index) => ({
+            ...compileSemanticCanvasSection(child, width, theme, options),
+            name: `Nested ${index + 1}`
+          }))
+        : [])
+    ]
+  })
+}
+
+function compileSemanticCanvasHtmlSection(
+  rawSection: SemanticCanvasSection,
+  width: number,
+  theme: ResolvedCanvasTheme,
+  options: SemanticCanvasCompileOptions
+): string {
+  const section = resolveSemanticCanvasSection(rawSection, options)
+  const type = toCanvasString(section.type, 'section').toLowerCase()
+  const wrap = (inner: string, extraStyle = '') => `<section style="display:flex;flex-direction:column;gap:14px;width:100%;${extraStyle}">${inner}</section>`
+  if (type === 'nav') {
+    return `<section style="display:flex;justify-content:space-between;align-items:center;width:100%;padding:0 0 8px;">
+      <div style="font:700 26px/1.1 Inter,sans-serif;color:${theme.textPrimary};">${escapeCanvasHtml(toCanvasString(section.title, 'Brand'))}</div>
+      <div style="font:600 14px/1.1 Inter,sans-serif;color:${theme.textSecondary};">${escapeCanvasHtml(toCanvasString(section.secondary, 'Menu'))}</div>
+    </section>`
+  }
+  if (type === 'hero') {
+    const eyebrow = toCanvasString(section.eyebrow)
+    const badge = toCanvasString(section.badge)
+    const subtitle = toCanvasString(section.subtitle || section.description)
+    return wrap(`
+      ${eyebrow ? `<div style="font:700 12px/1.2 Inter,sans-serif;letter-spacing:0.12em;text-transform:uppercase;color:${theme.accent};">${escapeCanvasHtml(eyebrow)}</div>` : ''}
+      ${badge ? `<div style="display:inline-flex;align-self:flex-start;padding:6px 10px;border-radius:999px;background:${theme.accentSoft};color:#111827;font:700 11px/1 Inter,sans-serif;">${escapeCanvasHtml(badge)}</div>` : ''}
+      <h1 style="margin:0;font:800 ${width <= 480 ? 44 : 64}px/0.95 Inter,sans-serif;color:${theme.textPrimary};">${escapeCanvasHtml(toCanvasString(section.title, 'Headline'))}</h1>
+      ${subtitle ? `<p style="margin:0;max-width:${Math.min(width, 720)}px;font:400 16px/1.5 Inter,sans-serif;color:${theme.textSecondary};">${escapeCanvasHtml(subtitle)}</p>` : ''}
+      <div style="width:100%;height:${width <= 480 ? 240 : 320}px;border-radius:28px;background:linear-gradient(135deg, ${theme.surfaceMuted}, ${theme.surface});border:1px solid ${theme.border};display:flex;align-items:flex-end;justify-content:flex-start;padding:20px;">
+        <div style="font:600 13px/1.2 Inter,sans-serif;color:${theme.textMuted};">${escapeCanvasHtml(toCanvasString(section.mediaLabel, 'Hero media'))}</div>
+      </div>
+    `, `padding:24px;border-radius:28px;background:${theme.surface};border:1px solid ${theme.border};`)
+  }
+  if (type === 'product-info') {
+    const details = toCanvasStringList(section.details)
+    return wrap(`
+      <h2 style="margin:0;font:800 32px/1 Inter,sans-serif;color:${theme.textPrimary};">${escapeCanvasHtml(toCanvasString(section.title, 'Product Title'))}</h2>
+      ${toCanvasString(section.subtitle) ? `<div style="font:500 15px/1.4 Inter,sans-serif;color:${theme.textMuted};">${escapeCanvasHtml(toCanvasString(section.subtitle))}</div>` : ''}
+      ${(toCanvasString(section.rating) || toCanvasString(section.reviewCount)) ? `<div style="font:600 13px/1.4 Inter,sans-serif;color:${theme.accentSoft};">${escapeCanvasHtml([toCanvasString(section.rating), toCanvasString(section.reviewCount)].filter(Boolean).join(' · '))}</div>` : ''}
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+        <div style="font:800 28px/1 Inter,sans-serif;color:${theme.textPrimary};">${escapeCanvasHtml(toCanvasString(section.price, '$0'))}</div>
+        ${toCanvasString(section.secondaryPrice) ? `<div style="font:500 14px/1 Inter,sans-serif;color:${theme.textMuted};">${escapeCanvasHtml(toCanvasString(section.secondaryPrice))}</div>` : ''}
+      </div>
+      ${details.length > 0 ? `<div style="display:flex;flex-direction:column;gap:8px;">${details.map((detail) => `<div style="font:500 13px/1.4 Inter,sans-serif;color:${theme.textSecondary};">${escapeCanvasHtml(detail)}</div>`).join('')}</div>` : ''}
+    `)
+  }
+  if (type === 'cta-row' || type === 'button-group') {
+    const labels = [toCanvasString(section.primary, 'Primary action'), toCanvasString(section.secondary)].filter(Boolean)
+    return `<section style="display:flex;flex-direction:${width <= 480 ? 'column' : 'row'};gap:12px;width:100%;">${labels.map((label, index) => `
+      <button style="appearance:none;border:${index === 0 ? 'none' : `1px solid ${theme.border}`};background:${index === 0 ? theme.accent : theme.surfaceMuted};color:${index === 0 ? '#ffffff' : theme.textPrimary};border-radius:18px;padding:16px 20px;font:700 15px/1 Inter,sans-serif;min-height:52px;flex:${width <= 480 ? '1 1 auto' : '0 0 auto'};">${escapeCanvasHtml(label)}</button>
+    `).join('')}</section>`
+  }
+  if (type === 'card-list' || type === 'list' || type === 'feature-grid') {
+    const items = Array.isArray(section.items) ? section.items : []
+    const columns = clampCanvasNumber(section.columns, width <= 640 ? 1 : 2, 1, 4)
+    return `<section style="display:grid;grid-template-columns:repeat(${columns}, minmax(0, 1fr));gap:14px;width:100%;">${items.slice(0, 6).map((item, index) => {
+      const record = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+      return `<article style="display:flex;flex-direction:column;gap:8px;padding:18px;border-radius:22px;background:${theme.surfaceMuted};border:1px solid ${theme.border};">
+        <div style="font:700 17px/1.3 Inter,sans-serif;color:${theme.textPrimary};">${escapeCanvasHtml(toCanvasString(record.title, `Item ${index + 1}`))}</div>
+        ${toCanvasString(record.subtitle || record.description) ? `<div style="font:400 13px/1.5 Inter,sans-serif;color:${theme.textSecondary};">${escapeCanvasHtml(toCanvasString(record.subtitle || record.description))}</div>` : ''}
+        ${toCanvasString(record.meta) ? `<div style="font:500 12px/1.4 Inter,sans-serif;color:${theme.textMuted};">${escapeCanvasHtml(toCanvasString(record.meta))}</div>` : ''}
+      </article>`
+    }).join('')}</section>`
+  }
+  if (type === 'metric-row' || type === 'stats') {
+    const stats = Array.isArray(section.stats) ? section.stats : []
+    const columns = clampCanvasNumber(section.columns, stats.length >= 4 ? 4 : Math.max(1, stats.length || 3), 1, 4)
+    return `<section style="display:grid;grid-template-columns:repeat(${columns}, minmax(0, 1fr));gap:12px;width:100%;">${stats.slice(0, 6).map((item, index) => {
+      const record = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+      return `<div style="display:flex;flex-direction:column;gap:6px;padding:16px;border-radius:18px;background:${theme.surfaceMuted};border:1px solid ${theme.border};">
+        <div style="font:800 24px/1 Inter,sans-serif;color:${theme.textPrimary};">${escapeCanvasHtml(toCanvasString(record.value, `0${index + 1}`))}</div>
+        <div style="font:500 12px/1.4 Inter,sans-serif;color:${theme.textMuted};">${escapeCanvasHtml(toCanvasString(record.label, `Metric ${index + 1}`))}</div>
+      </div>`
+    }).join('')}</section>`
+  }
+  if (type === 'footer') {
+    const links = toCanvasStringList(section.links)
+    return wrap(`
+      ${toCanvasString(section.title) ? `<div style="font:700 14px/1.2 Inter,sans-serif;color:${theme.textPrimary};">${escapeCanvasHtml(toCanvasString(section.title))}</div>` : ''}
+      ${links.length > 0 ? `<div style="display:flex;flex-wrap:wrap;gap:12px;">${links.map((link) => `<div style="font:500 12px/1.4 Inter,sans-serif;color:${theme.textMuted};">${escapeCanvasHtml(link)}</div>`).join('')}</div>` : ''}
+    `, `padding:20px;border-radius:20px;background:${theme.surface};border:1px solid ${theme.border};`)
+  }
+  if (type === 'component-group') {
+    const children = Array.isArray(section.children) ? section.children as SemanticCanvasSection[] : []
+    return wrap(children.map((child) => compileSemanticCanvasHtmlSection(child, width, theme, options)).join(''))
+  }
+  return wrap(`
+    ${toCanvasString(section.title) ? `<h2 style="margin:0;font:700 24px/1.15 Inter,sans-serif;color:${theme.textPrimary};">${escapeCanvasHtml(toCanvasString(section.title))}</h2>` : ''}
+    ${toCanvasString(section.subtitle || section.description) ? `<p style="margin:0;font:400 14px/1.5 Inter,sans-serif;color:${theme.textSecondary};">${escapeCanvasHtml(toCanvasString(section.subtitle || section.description))}</p>` : ''}
+    ${Array.isArray(section.children) ? (section.children as SemanticCanvasSection[]).map((child) => compileSemanticCanvasHtmlSection(child, width, theme, options)).join('') : ''}
+  `)
+}
+
+function compileSemanticCanvasHtmlDesign(design: CanvasDesignDocument, width: number, height: number): { background: string; html: string } | null {
+  if (!design.page || typeof design.page !== 'object') return null
+  const page = design.page as SemanticCanvasPage
+  const sections = Array.isArray(page.sections) ? page.sections as SemanticCanvasSection[] : []
+  const theme = resolveCanvasTheme(design.theme, design.background)
+  const padding = clampCanvasNumber(page.padding, width <= 480 ? 20 : 32, 0, 80)
+  const gap = clampCanvasNumber(page.gap, width <= 480 ? 18 : 24, 0, 80)
+  const components = resolveSemanticCanvasComponents(design.components)
+  const options: SemanticCanvasCompileOptions = { components }
+  const content = sections.map((section) => compileSemanticCanvasHtmlSection(section, Math.max(120, width - padding * 2), theme, options)).join('')
+  return {
+    background: theme.background,
+    html: `<div style="width:${width}px;min-height:${height}px;background:${theme.background};padding:${padding}px;display:flex;flex-direction:column;gap:${gap}px;font-family:Inter,sans-serif;color:${theme.textPrimary};">${content}</div>`
+  }
+}
+
+function compileSemanticCanvasDesign(
+  design: unknown,
+  width: number,
+  height: number,
+  options: { forceEditableDesign?: boolean } = {}
+): unknown {
+  if (!design || typeof design !== 'object') return design
+  const document = design as CanvasDesignDocument
+  if (!document.page || typeof document.page !== 'object') return design
+
+  const page = document.page as SemanticCanvasPage
+  const renderMode = toCanvasString(document.renderMode || page.renderMode, 'design').toLowerCase()
+  if (!options.forceEditableDesign && (renderMode === 'html' || renderMode === 'dom')) {
+    return compileSemanticCanvasHtmlDesign(document, width, height) ?? design
+  }
+  const theme = resolveCanvasTheme(document.theme, document.background)
+  const padding = clampCanvasNumber(page.padding, width <= 480 ? 20 : 32, 0, 80)
+  const gap = clampCanvasNumber(page.gap, width <= 480 ? 18 : 24, 0, 80)
+  const innerWidth = Math.max(120, width - padding * 2)
+  const sections = Array.isArray(page.sections) ? page.sections as SemanticCanvasSection[] : []
+  const components = resolveSemanticCanvasComponents(document.components)
+  const compileOptions: SemanticCanvasCompileOptions = { components }
+
+  return {
+    background: theme.background,
+    nodes: [
+      canvasStackNode('Page', {
+        x: 0,
+        y: 0,
+        width,
+        height,
+        direction: 'vertical',
+        gap,
+        padding,
+        alignItems: 'stretch',
+        justifyContent: 'start',
+        fill: 'transparent',
+        sizing: 'fixed',
+        children: sections.map((section) => compileSemanticCanvasSection(section, innerWidth, theme, compileOptions))
+      })
+    ]
+  }
+}
+
+function collectCanvasDesignNodes(nodes: unknown): CanvasDesignNode[] {
+  if (!Array.isArray(nodes)) return []
+  const result: CanvasDesignNode[] = []
+  for (const entry of nodes) {
+    if (!entry || typeof entry !== 'object') continue
+    const node = entry as CanvasDesignNode
+    result.push(node)
+    if (Array.isArray(node.children)) result.push(...collectCanvasDesignNodes(node.children))
+  }
+  return result
+}
+
+function validateCanvasDesignPayload(design: unknown): void {
+  if (!design || typeof design !== 'object') {
+    throw new Error('Design payload must be an object with background and nodes.')
+  }
+
+  const document = design as CanvasDesignDocument
+  if (typeof (document as { html?: unknown }).html === 'string') {
+    const html = ((document as { html?: unknown }).html as string).toLowerCase()
+    if (html.includes('text layer') || html.includes('edit this text')) {
+      throw new Error(
+        'Rejected weak design payload: placeholder text leaked into the generated HTML. ' +
+        'Use final copy before calling canvas-update-design-frame.'
+      )
+    }
+    return
+  }
+
+  if (!Array.isArray(document.nodes)) {
+    throw new Error('Design payload must include a nodes array.')
+  }
+
+  if (document.nodes.length === 0) {
+    throw new Error(
+      'Rejected weak design payload: the frame contains no layers. ' +
+      'Add real content before calling canvas-update-design-frame.'
+    )
+  }
+
+  const topLevelNodes = document.nodes
+  const allNodes = collectCanvasDesignNodes(document.nodes)
+  const containerCount = allNodes.filter((node) => node.type === 'stack' || node.type === 'grid').length
+  const textNodes = allNodes.filter((node) => node.type === 'text')
+  const rectNodes = allNodes.filter((node) => node.type === 'rect')
+  const emptyContainers = allNodes.filter((node) => (node.type === 'stack' || node.type === 'grid') && (!Array.isArray(node.children) || node.children.length === 0))
+  const placeholderTexts = textNodes.filter((node) => {
+    const text = typeof node.text === 'string' ? node.text.trim().toLowerCase() : ''
+    return text === 'text layer' || text === 'edit this text' || text === 'text'
+  })
+
+  if (allNodes.length === 0 || (textNodes.length === 0 && rectNodes.length === 0)) {
+    throw new Error(
+      'Rejected weak design payload: the frame has no visible text or surfaces. ' +
+      'Provide actual layout/content instead of an empty container tree.'
+    )
+  }
+
+  if (emptyContainers.length > 0 && textNodes.length === 0 && rectNodes.length === 0) {
+    throw new Error(
+      'Rejected weak design payload: only empty containers were provided. ' +
+      'Populate the layout with actual text, cards, or surfaces before updating the frame.'
+    )
+  }
+
+  if (placeholderTexts.length >= 2) {
+    throw new Error(
+      'Rejected weak design payload: placeholder text leaked into the final design. ' +
+      'Replace placeholder copy with real content before calling canvas-update-design-frame.'
+    )
+  }
+
+  if (containerCount === 0 && textNodes.length >= 4) {
+    throw new Error(
+      'Rejected weak design payload: too many loose text layers with no stack/container structure. ' +
+      'Use nested stack nodes for layout instead of free-positioned text blocks.'
+    )
+  }
+
+  if (containerCount === 0 && Array.isArray(topLevelNodes) && topLevelNodes.length >= 6) {
+    throw new Error(
+      'Rejected weak design payload: too many top-level nodes with no grouping. ' +
+      'Create section/container stacks and place text/cards inside them.'
+    )
+  }
+
+  if (containerCount > 0 && textNodes.length >= 8 && placeholderTexts.length >= 1) {
+    throw new Error(
+      'Rejected weak design payload: layout structure exists, but placeholder text and text spam still dominate the design. ' +
+      'Reduce loose text nodes and provide final copy.'
+    )
+  }
+}
+
+function getCanvasErrorTargetId(args: Record<string, unknown>, fallbackId: string | null): string | null {
+  if (typeof args.id === 'string' && args.id.trim()) return args.id
+  if (typeof args.frameId === 'string' && args.frameId.trim()) return args.frameId
+  return fallbackId
+}
+
 function writePortFile(port: number): void {
   try { writeFileSync(PORT_FILE, String(port), 'utf8') } catch { /* non-fatal */ }
 }
@@ -32,6 +768,31 @@ export class APIBridge {
 
   setCanvasStateProvider(fn: () => unknown[]): void {
     this.canvasStateProvider = fn
+  }
+
+  private pushCanvasFrameError(message: string, args: Record<string, unknown> = {}): void {
+    const frames = this.canvasStateProvider ? this.canvasStateProvider() : []
+    const fallback = Array.isArray(frames) && frames.length > 0
+      ? (frames[frames.length - 1] as { id?: unknown })?.id
+      : null
+    const id = getCanvasErrorTargetId(args, typeof fallback === 'string' ? fallback : null)
+    this.safeSendToAll('canvas:command', { command: 'set-frame-error', args: { id, message } })
+  }
+
+  private resolveCanvasFrameSize(frameId: string | null): { width: number; height: number } {
+    const frames = this.canvasStateProvider ? this.canvasStateProvider() : []
+    if (Array.isArray(frames) && frameId) {
+      const frame = frames.find((entry) => entry && typeof entry === 'object' && (entry as { id?: unknown }).id === frameId) as
+        | { width?: unknown; height?: unknown }
+        | undefined
+      if (frame) {
+        return {
+          width: typeof frame.width === 'number' ? frame.width : 1280,
+          height: typeof frame.height === 'number' ? frame.height : 720
+        }
+      }
+    }
+    return { width: 1280, height: 720 }
   }
 
   private buildStateSnapshot(): {
@@ -873,10 +1634,10 @@ export class APIBridge {
         if (viewState.activeView === 'canvas' && !args.canvas_confirmed) {
           throw new Error(
             'CANVAS MODE — You must ask the user before generating an image.\n\n' +
-            'Ask: "Do you want me to draw this on the canvas (live code, fully editable), ' +
-            'or generate it as a photo/image using GPT image generation?"\n\n' +
+            'Ask: "Do you want me to design this directly on the canvas with editable layers, ' +
+            'draw it in code on the canvas, or generate it as a photo/image using GPT image generation?"\n\n' +
             'If the user confirms image generation, call generate_image again with canvas_confirmed: true. ' +
-            'If they want it drawn, use canvas-run-paperjs or canvas-run-matterjs instead.'
+            'If they want direct design editing, use a design frame. If they want it drawn, use canvas-run-paperjs or canvas-run-matterjs instead.'
           )
         }
         return this.generateImageAsset({
@@ -1306,9 +2067,57 @@ export class APIBridge {
         return { ok: true }
       }
 
+      case 'canvas-add-design-frame':
+      case 'canvas_add_design_frame': {
+        const width = typeof args.width === 'number' ? args.width : 1280
+        const height = typeof args.height === 'number' ? args.height : 720
+        const compiledDesign = args.design !== undefined
+          ? compileSemanticCanvasDesign(args.design, width, height, { forceEditableDesign: true })
+          : undefined
+        if (args.design !== undefined) {
+          try {
+            validateCanvasDesignPayload(compiledDesign)
+          } catch (error) {
+            this.pushCanvasFrameError(error instanceof Error ? error.message : String(error), args)
+            throw error
+          }
+        }
+        this.safeSendToAll('canvas:command', {
+          command: 'add-frame',
+          args: {
+            ...args,
+            mode: 'design',
+            ...(compiledDesign !== undefined ? { design: compiledDesign } : {})
+          }
+        })
+        return { ok: true }
+      }
+
       case 'canvas-update-frame':
       case 'canvas_update_frame': {
         this.safeSendToAll('canvas:command', { command: 'update-frame', args })
+        return { ok: true }
+      }
+
+      case 'canvas-update-design-frame':
+      case 'canvas_update_design_frame': {
+        const frameId = typeof args.id === 'string' ? args.id : typeof args.frameId === 'string' ? args.frameId : null
+        const { width, height } = this.resolveCanvasFrameSize(frameId)
+        const compiledDesign = compileSemanticCanvasDesign(args.design, width, height, { forceEditableDesign: true })
+        try {
+          validateCanvasDesignPayload(compiledDesign)
+        } catch (error) {
+          this.pushCanvasFrameError(error instanceof Error ? error.message : String(error), args)
+          throw error
+        }
+        this.safeSendToAll('canvas:command', {
+          command: 'update-frame',
+          args: {
+            ...args,
+            mode: 'design',
+            design: compiledDesign
+          }
+        })
         return { ok: true }
       }
 
@@ -1327,6 +2136,45 @@ export class APIBridge {
       case 'canvas-clear':
       case 'canvas_clear': {
         this.safeSendToAll('canvas:command', { command: 'clear', args: {} })
+        return { ok: true }
+      }
+
+      case 'canvas_run_paperjs':
+      case 'canvas-run-paperjs': {
+        const frameId = typeof args.frameId === 'string' ? args.frameId : typeof args.id === 'string' ? args.id : null
+        if (!frameId) throw new Error('canvas_run_paperjs requires frameId')
+        const script = typeof args.script === 'string' ? args.script : null
+        if (!script) throw new Error('canvas_run_paperjs requires script')
+        this.safeSendToAll('canvas:command', { command: 'update-frame', args: { id: frameId, script, mode: 'paperjs' } })
+        return { ok: true }
+      }
+
+      case 'canvas_run_matterjs':
+      case 'canvas-run-matterjs': {
+        const frameId = typeof args.frameId === 'string' ? args.frameId : typeof args.id === 'string' ? args.id : null
+        if (!frameId) throw new Error('canvas_run_matterjs requires frameId')
+        const script = typeof args.script === 'string' ? args.script : null
+        if (!script) throw new Error('canvas_run_matterjs requires script')
+        this.safeSendToAll('canvas:command', { command: 'update-frame', args: { id: frameId, script, mode: 'matterjs' } })
+        return { ok: true }
+      }
+
+      case 'canvas_get_frames':
+      case 'canvas-get-frames': {
+        const state = this.canvasStateProvider ? this.canvasStateProvider() : []
+        return { frames: state, count: (state as unknown[]).length }
+      }
+
+      case 'canvas_loading':
+      case 'canvas-loading': {
+        const message = typeof args.message === 'string' ? args.message : (Array.isArray(args) ? args[0] : undefined)
+        this.safeSendToAll('canvas:command', { command: 'set-loading', args: { message } })
+        return { ok: true }
+      }
+
+      case 'canvas_done':
+      case 'canvas-done': {
+        this.safeSendToAll('canvas:command', { command: 'clear-loading', args: {} })
         return { ok: true }
       }
 
