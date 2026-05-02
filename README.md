@@ -71,8 +71,7 @@ Import media, scrub, trim, split, move, duplicate, ripple edit, generate caption
 <tr>
 <td width="42%" valign="top">
 <h3>Monet Canvas — design alongside the editor</h3>
-A new artboard-based design surface inside Monet. Ask Claude Code or Codex to draw with <strong>Paper.js</strong>, simulate physics with <strong>Matter.js</strong>, or build any HTML/CSS/JS frame. Each rendered frame auto-imports to the video timeline media library, so designs flow straight into your edit. Figma-style click-and-drag panning, inline library bundles (no CDN), and live agent loading animations on each frame.
-</td>
+A new artboard-based design surface inside Monet. Ask Claude Code or Codex to draw with <strong>Paper.js</strong>, simulate physics with <strong>Matter.js</strong>, or build any HTML/CSS/JS frame.
 <td width="58%">
 <img src="./resources/canvas.png" alt="Monet Canvas" width="100%" />
 </td>
