@@ -11,8 +11,21 @@ import { resolveFfmpegBinary } from './media-binaries.js'
 
 const SERVICE_DIR = dirname(fileURLToPath(import.meta.url))
 const CWD_ROOT = process.cwd()
-const FILE_ROOT = join(SERVICE_DIR, '..', '..', '..', '..')
-const APP_ROOT = existsSync(join(CWD_ROOT, 'package.json')) ? CWD_ROOT : FILE_ROOT
+function resolveAppRoot(): string {
+  if (existsSync(join(CWD_ROOT, 'package.json'))) return CWD_ROOT
+  try {
+    const electronAppPath = app.getAppPath()
+    if (electronAppPath) return electronAppPath
+  } catch {
+    // app not ready yet
+  }
+  for (let depth = 1; depth <= 5; depth++) {
+    const candidate = join(SERVICE_DIR, ...Array(depth).fill('..'))
+    if (existsSync(join(candidate, 'package.json'))) return candidate
+  }
+  return join(SERVICE_DIR, '..', '..', '..')
+}
+const APP_ROOT = resolveAppRoot()
 const LOCAL_VENV_PYTHON_DEV = join(APP_ROOT, '.python-runtime', 'bin', 'python')
 function getUserDataVenvPython(): string {
   try {
