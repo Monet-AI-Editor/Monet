@@ -210,7 +210,7 @@ export class TranscriptionService {
           python,
           args,
           {
-            cwd: APP_ROOT,
+            cwd: tempDir,
             env: {
               ...process.env,
               AI_VIDEO_EDITOR_LOCAL_STT_MODEL: process.env.AI_VIDEO_EDITOR_LOCAL_STT_MODEL || 'tiny',
@@ -259,7 +259,6 @@ export class TranscriptionService {
           outputPath
         ],
         {
-          cwd: APP_ROOT,
           maxBuffer: 1024 * 1024 * 16
         },
         (error, _stdout, stderr) => {
