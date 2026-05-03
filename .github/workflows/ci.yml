@@ -50,4 +50,7 @@ jobs:
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          MONET_APTABASE_APP_KEY: A-US-2017866354
+          MONET_SENTRY_DSN: https://e056de5fd28df1a630359f45cbd7f18e@o4511253642215424.ingest.us.sentry.io/4511253644902400
+          VITE_MONET_SENTRY_DSN: https://e056de5fd28df1a630359f45cbd7f18e@o4511253642215424.ingest.us.sentry.io/4511253644902400
         run: npm run dist:mac

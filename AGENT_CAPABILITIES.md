@@ -1,5 +1,22 @@
 # What Claude Can Do in This Video Editor
 
+## ⚠️ OUTPUT FILE NAMING — MANDATORY (read this first)
+
+**Never reuse a filename when editing or regenerating a video or image.** The asset cache holds onto the previous file by path, so writing to the same name silently shows the stale content. Every edit/regenerate must produce a **new unique filename** (e.g. `clip_v1.mp4`, `clip_v2.mp4`, or a timestamp suffix). Applies to all video renders, image generations, canvas exports, and thumbnails. If a target path already exists, append `_v2`, `_v3`, … — do not overwrite.
+
+## ⚠️ AUDIO ON MULTI-CLIP TIMELINES — MANDATORY
+
+When adding audio to a timeline with **more than one video clip**, audio cuts at every clip boundary. Required flow:
+
+1. Tell the user: *"To keep audio from cutting between clips, I'll merge all video clips into one combined video first, then add the audio. OK to proceed?"*
+2. Wait for confirmation — do not auto-merge.
+3. Concatenate all clips into a single new file (unique filename per the rule above).
+4. Replace the multi-clip video track with that merged clip, then add the audio.
+
+Single-clip timelines: skip the merge.
+
+---
+
 ## ⚠️ CANVAS MODE — MANDATORY RULES (read this first)
 
 When `activeView=canvas` is reported by the hook or `editorctl get-state`:

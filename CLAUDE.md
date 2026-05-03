@@ -1,5 +1,28 @@
 # Monet — Claude Agent Guide
 
+## ⚠️ OUTPUT FILE NAMING — MANDATORY (read this first)
+
+**Never reuse a filename when editing or regenerating a video or image.** Electron/Chromium and the asset cache hold onto the previous file by path, so writing to the same name silently shows the old content. Every edit/regenerate must produce a **new unique filename**.
+
+- ✅ `clip_v1.mp4`, `clip_v2.mp4`, `clip_v3.mp4` … (or timestamp/short hash suffix)
+- ❌ Overwriting `clip.mp4` again and again
+- Applies to: video renders (Remotion, FFmpeg), image generations (GPT image 2, edits), canvas exports, thumbnails — anything written to disk that the UI then loads.
+- If an output path already exists, append `_v2`, `_v3`, … or a timestamp (`_YYYYMMDD_HHMMSS`). Do **not** delete-and-rewrite the same path.
+
+## ⚠️ AUDIO ON MULTI-CLIP TIMELINES — MANDATORY
+
+When adding audio (music, voiceover, SFX) to a timeline that has **more than one video clip**, audio gets cut at every clip boundary. To avoid this:
+
+1. **Tell the user first**, in plain language: *"To keep the audio from cutting between clips, I'll merge all your video clips into a single combined video first, then layer the audio over it. The individual clips will still exist in your project. OK to proceed?"*
+2. **Wait for confirmation.** Do not auto-merge.
+3. After confirmation, concatenate every video clip into one continuous file (use a new unique filename per the rule above — e.g. `merged_v1.mp4`).
+4. Replace the multi-clip video track with that single merged clip.
+5. Then add the audio track on top.
+
+If there is only one video clip, skip the merge and add audio directly. Never add audio across multiple clips without the merge + user confirmation.
+
+---
+
 ## ⚠️ CANVAS MODE — MANDATORY RULES (read this first)
 
 When `activeView=canvas` is reported by the hook or `editorctl get-state`:
