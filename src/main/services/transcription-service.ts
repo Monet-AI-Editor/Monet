@@ -4,6 +4,7 @@ import { dirname, join } from 'path'
 import { execFile, execFileSync } from 'child_process'
 import { fileURLToPath } from 'url'
 import { tmpdir } from 'os'
+import { app } from 'electron'
 import OpenAI from 'openai'
 import type { TranscriptSegment } from '../../shared/editor.js'
 import { resolveFfmpegBinary } from './media-binaries.js'
@@ -12,8 +13,18 @@ const SERVICE_DIR = dirname(fileURLToPath(import.meta.url))
 const CWD_ROOT = process.cwd()
 const FILE_ROOT = join(SERVICE_DIR, '..', '..', '..', '..')
 const APP_ROOT = existsSync(join(CWD_ROOT, 'package.json')) ? CWD_ROOT : FILE_ROOT
-const LOCAL_VENV_PYTHON = join(APP_ROOT, '.python-runtime', 'bin', 'python')
-const LOCAL_TRANSCRIBE_SCRIPT = join(APP_ROOT, 'scripts', 'local_transcribe.py')
+const LOCAL_VENV_PYTHON_DEV = join(APP_ROOT, '.python-runtime', 'bin', 'python')
+function getUserDataVenvPython(): string {
+  try {
+    return join(app.getPath('userData'), 'python-runtime', 'bin', 'python')
+  } catch {
+    return ''
+  }
+}
+const LOCAL_TRANSCRIBE_SCRIPT = join(APP_ROOT, 'scripts', 'local_transcribe.py').replace(
+  '/app.asar/',
+  '/app.asar.unpacked/'
+)
 
 type LocalTranscriptionResult = {
   language?: string | null
@@ -91,8 +102,53 @@ export class TranscriptionService {
   }
 
   private resolvePythonBinary(): string | null {
-    if (existsSync(LOCAL_VENV_PYTHON)) return LOCAL_VENV_PYTHON
+    const userDataPython = getUserDataVenvPython()
+    if (userDataPython && existsSync(userDataPython)) return userDataPython
+    if (existsSync(LOCAL_VENV_PYTHON_DEV)) return LOCAL_VENV_PYTHON_DEV
     return 'python3'
+  }
+
+  async ensureLocalRuntime(
+    onProgress?: (line: string) => void
+  ): Promise<{ ok: boolean; pythonPath?: string; error?: string }> {
+    if (this.isLocalAvailable()) {
+      return { ok: true, pythonPath: this.resolvePythonBinary() ?? undefined }
+    }
+
+    let venvDir: string
+    try {
+      venvDir = join(app.getPath('userData'), 'python-runtime')
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+    const pythonBin = join(venvDir, 'bin', 'python')
+
+    const runStreaming = (cmd: string, args: string[]): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const child = execFile(cmd, args, { maxBuffer: 1024 * 1024 * 64 }, (error, _stdout, stderr) => {
+          if (error) {
+            reject(new Error(stderr?.trim() || error.message))
+            return
+          }
+          resolve()
+        })
+        child.stdout?.on('data', (chunk) => onProgress?.(chunk.toString()))
+        child.stderr?.on('data', (chunk) => onProgress?.(chunk.toString()))
+      })
+
+    try {
+      if (!existsSync(pythonBin)) {
+        onProgress?.(`Creating venv at ${venvDir}\n`)
+        await runStreaming('python3', ['-m', 'venv', venvDir])
+      }
+      onProgress?.('Upgrading pip\n')
+      await runStreaming(pythonBin, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'])
+      onProgress?.('Installing faster-whisper\n')
+      await runStreaming(pythonBin, ['-m', 'pip', 'install', 'faster-whisper'])
+      return { ok: true, pythonPath: pythonBin }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
   }
 
   private async transcribeLocally(filePath: string, language?: string): Promise<TranscriptSegment[]> {

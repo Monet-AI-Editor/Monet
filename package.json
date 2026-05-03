@@ -21,7 +21,8 @@
     ],
     "asarUnpack": [
       "node_modules/node-pty/**/*",
-      "out/cli/**/*"
+      "out/cli/**/*",
+      "scripts/**/*"
     ],
     "mac": {
       "category": "public.app-category.video",

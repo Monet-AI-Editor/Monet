@@ -241,7 +241,7 @@ export default function App() {
 
   const canvasProjectStorageKey = store.projectFilePath
     ? `file:${store.projectFilePath}`
-    : `draft:${store.projectName || 'Untitled Project'}`
+    : `draft:${store.projectInstanceId}`
 
   return (
     <div

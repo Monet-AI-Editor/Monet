@@ -319,6 +319,11 @@ export function isMissingProjectSelectionError(error: unknown): boolean {
 
 export function useEditorStore(): EditorState & EditorActions {
   const [projectName, setProjectNameState] = useState('Untitled Project')
+  const [projectInstanceId, setProjectInstanceId] = useState<string>(() =>
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `proj_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+  )
   const [assets, setAssets] = useState<MediaAsset[]>([])
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
   const [tracks, setTracks] = useState<Track[]>([])
@@ -414,6 +419,11 @@ export function useEditorStore(): EditorState & EditorActions {
 
   const applyProject = useCallback((project: BackendProject) => {
     const mapped = mapProject(project)
+    setProjectInstanceId(
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `proj_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+    )
     setProjectNameState(mapped.projectName)
     setAssets(mapped.assets)
     setTasks(mapped.tasks)
@@ -857,6 +867,7 @@ export function useEditorStore(): EditorState & EditorActions {
     canUndo,
     canRedo,
     projectFilePath,
+    projectInstanceId,
     projectManager
   }), [
     projectName,
@@ -891,6 +902,7 @@ export function useEditorStore(): EditorState & EditorActions {
     canUndo,
     canRedo,
     projectFilePath,
+    projectInstanceId,
     projectManager
   ])
 

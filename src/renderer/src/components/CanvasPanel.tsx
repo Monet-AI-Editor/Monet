@@ -980,14 +980,6 @@ export function CanvasPanel({ projectStorageKey, assets = [] }: { projectStorage
 
     if (!cancelled) setArtboards([])
 
-    fetch('/monet-canvas-state.json')
-      .then(r => r.json())
-      .then((data: Artboard[]) => {
-        if (cancelled || data.length === 0) return
-        setArtboards(normalizeArtboards(data))
-      })
-      .catch(() => {})
-
     return () => {
       cancelled = true
     }

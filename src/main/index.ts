@@ -960,6 +960,23 @@ app.whenReady().then(async () => {
   apiBridge.start()
   Menu.setApplicationMenu(buildApplicationMenu())
 
+  if (!transcriptionService.isLocalAvailable()) {
+    void transcriptionService
+      .ensureLocalRuntime((line) => {
+        process.stdout.write(`[local-stt] ${line}`)
+      })
+      .then((result) => {
+        if (result.ok) {
+          console.log('[local-stt] runtime ready at', result.pythonPath)
+        } else if (result.error) {
+          console.warn('[local-stt] setup failed:', result.error)
+        }
+      })
+      .catch((error) => {
+        console.warn('[local-stt] setup threw:', error)
+      })
+  }
+
   try {
     const migrated = await migrateLegacyManagedProjects()
     for (const [legacyPath, nextPath] of migrated) {
