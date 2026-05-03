@@ -1317,17 +1317,29 @@ app.whenReady().then(async () => {
 
     const settings = await settingsStore.getSettings()
     const openAiKey = settings.apiKeys.openai || settings.semanticApiKeys.openai
-    const canUseLocal = transcriptionService.isLocalAvailable()
+    let canUseLocal = transcriptionService.isLocalAvailable()
     if (!canUseLocal && !openAiKey) {
+      // Try to install the local runtime on demand before failing.
       projectStore.updateTask(task.id, {
-        status: 'error',
-        progress: 1,
-        label: `Transcription unavailable for ${asset.name}: install local transcription or add an OpenAI key`
+        status: 'running',
+        progress: 0.05,
+        label: `Setting up local transcription for ${asset.name}…`
       })
-      if (options.requireKey) {
-        throw new Error('No transcription backend configured')
+      const setup = await transcriptionService.ensureLocalRuntime((line) => {
+        process.stdout.write(`[local-stt] ${line}`)
+      })
+      canUseLocal = setup.ok && transcriptionService.isLocalAvailable()
+      if (!canUseLocal) {
+        projectStore.updateTask(task.id, {
+          status: 'error',
+          progress: 1,
+          label: `Transcription unavailable for ${asset.name}: ${setup.error || 'install local transcription or add an OpenAI key'}`
+        })
+        if (options.requireKey) {
+          throw new Error(setup.error || 'No transcription backend configured')
+        }
+        return { assetId, segments: [] }
       }
-      return { assetId, segments: [] }
     }
 
     try {
@@ -1651,8 +1663,10 @@ app.whenReady().then(async () => {
   })
 
   // Canvas state storage
-  ipcMain.handle('canvas:saveState', async (_event, artboards: unknown[]) => {
-    const key = getCanvasStateProjectKey()
+  ipcMain.handle('canvas:saveState', async (_event, artboardsArg: unknown[] | { key?: string; artboards: unknown[] }, maybeKey?: string) => {
+    const artboards = Array.isArray(artboardsArg) ? artboardsArg : artboardsArg.artboards
+    const explicitKey = Array.isArray(artboardsArg) ? maybeKey : artboardsArg.key
+    const key = explicitKey || getCanvasStateProjectKey()
     canvasStateCacheByProject.set(key, artboards)
     canvasStateCache = artboards
     try {
@@ -1664,8 +1678,8 @@ app.whenReady().then(async () => {
     return { ok: true }
   })
 
-  ipcMain.handle('canvas:loadState', async () => {
-    const key = getCanvasStateProjectKey()
+  ipcMain.handle('canvas:loadState', async (_event, explicitKey?: string) => {
+    const key = explicitKey || getCanvasStateProjectKey()
     const cached = canvasStateCacheByProject.get(key)
     if (cached && cached.length > 0) return { ok: true, artboards: cached }
     try {

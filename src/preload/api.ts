@@ -111,9 +111,10 @@ export function createPreloadApi(ipcRenderer: IpcRendererLike, webFrame: WebFram
     onExportProgress: (listener: (progress: unknown) => void) =>
       addRendererSubscription(ipcRenderer, 'editor:exportProgress', listener),
     toFileUrl: (filePath: string) => `media://asset?path=${encodeURIComponent(filePath)}`,
-    saveCanvasState: (artboards: unknown[]) => ipcRenderer.invoke('canvas:saveState', artboards),
-    loadCanvasState: () =>
-      ipcRenderer.invoke('canvas:loadState') as Promise<{ ok: boolean; artboards?: unknown[] }>,
+    saveCanvasState: (artboards: unknown[], key?: string) =>
+      ipcRenderer.invoke('canvas:saveState', artboards, key),
+    loadCanvasState: (key?: string) =>
+      ipcRenderer.invoke('canvas:loadState', key) as Promise<{ ok: boolean; artboards?: unknown[] }>,
     recoverLegacyCanvasState: () =>
       ipcRenderer.invoke('canvas:recoverLegacyState') as Promise<{ ok: boolean; artboards?: unknown[] }>,
     exportCanvasState: (artboards: unknown[]) =>

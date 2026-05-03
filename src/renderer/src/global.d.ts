@@ -114,8 +114,8 @@ declare global {
       }) => void) => () => void
       onExportProgress: (listener: (progress: ExportProgressState) => void) => () => void
       toFileUrl: (filePath: string) => string
-      saveCanvasState: (artboards: unknown[]) => Promise<{ ok: boolean }>
-      loadCanvasState: () => Promise<{ ok: boolean; artboards?: unknown[] }>
+      saveCanvasState: (artboards: unknown[], key?: string) => Promise<{ ok: boolean }>
+      loadCanvasState: (key?: string) => Promise<{ ok: boolean; artboards?: unknown[] }>
       recoverLegacyCanvasState: () => Promise<{ ok: boolean; artboards?: unknown[] }>
       exportCanvasState: (artboards: unknown[]) => Promise<{ ok: boolean; filePath?: string; canceled?: boolean; error?: string }>
       importCanvasState: () => Promise<{ ok: boolean; artboards?: unknown[]; filePath?: string; canceled?: boolean; error?: string }>

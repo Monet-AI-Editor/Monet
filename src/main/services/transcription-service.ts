@@ -21,6 +21,25 @@ function getUserDataVenvPython(): string {
     return ''
   }
 }
+
+const PYTHON_SYSTEM_CANDIDATES = [
+  '/opt/homebrew/bin/python3',
+  '/usr/local/bin/python3',
+  '/usr/bin/python3'
+]
+
+function resolveSystemPython3(): string | null {
+  for (const candidate of PYTHON_SYSTEM_CANDIDATES) {
+    if (existsSync(candidate)) return candidate
+  }
+  // Fallback: rely on PATH (only works if env was inherited correctly)
+  try {
+    execFileSync('python3', ['--version'], { stdio: 'ignore' })
+    return 'python3'
+  } catch {
+    return null
+  }
+}
 const LOCAL_TRANSCRIBE_SCRIPT = join(APP_ROOT, 'scripts', 'local_transcribe.py').replace(
   '/app.asar/',
   '/app.asar.unpacked/'
@@ -105,7 +124,7 @@ export class TranscriptionService {
     const userDataPython = getUserDataVenvPython()
     if (userDataPython && existsSync(userDataPython)) return userDataPython
     if (existsSync(LOCAL_VENV_PYTHON_DEV)) return LOCAL_VENV_PYTHON_DEV
-    return 'python3'
+    return resolveSystemPython3()
   }
 
   async ensureLocalRuntime(
@@ -138,8 +157,15 @@ export class TranscriptionService {
 
     try {
       if (!existsSync(pythonBin)) {
-        onProgress?.(`Creating venv at ${venvDir}\n`)
-        await runStreaming('python3', ['-m', 'venv', venvDir])
+        const systemPython = resolveSystemPython3()
+        if (!systemPython) {
+          return {
+            ok: false,
+            error: 'python3 not found on this system. Install Python 3 (e.g. from python.org) and restart Monet, or add an OpenAI API key in Settings.'
+          }
+        }
+        onProgress?.(`Creating venv at ${venvDir} using ${systemPython}\n`)
+        await runStreaming(systemPython, ['-m', 'venv', venvDir])
       }
       onProgress?.('Upgrading pip\n')
       await runStreaming(pythonBin, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'])

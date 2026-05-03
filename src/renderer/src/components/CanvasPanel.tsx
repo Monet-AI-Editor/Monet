@@ -877,7 +877,7 @@ function ArtboardErrorOverlay({ message }: { message: string }) {
   )
 }
 
-export function CanvasPanel({ projectStorageKey, assets = [] }: { projectStorageKey: string; assets?: MediaAsset[] }) {
+export function CanvasPanel({ projectStorageKey }: { projectStorageKey: string; assets?: MediaAsset[] }) {
   const normalizeArtboards = useCallback((input: Artboard[]) => (
     input.map(ab => ({
       script: '',
@@ -887,45 +887,17 @@ export function CanvasPanel({ projectStorageKey, assets = [] }: { projectStorage
     }))
   ), [])
 
-  const legacyStorageKey = 'monet-canvas-artboards'
   const storageKey = useMemo(() => `monet-canvas-artboards:${projectStorageKey}`, [projectStorageKey])
   const [artboards, setArtboards] = useState<Artboard[]>([])
 
-  const buildArtboardsFromMediaAssets = useCallback((mediaAssets: MediaAsset[]): Artboard[] => {
-    const canvasAssets = mediaAssets
-      .filter((asset) => asset.type === 'image')
-      .filter((asset) => {
-        const path = asset.path.toLowerCase()
-        const name = asset.name.toLowerCase()
-        return path.includes('canvas-frame-') || name.includes('canvas-frame-')
-      })
-      .sort((left, right) => left.addedAt - right.addedAt)
-
-    return canvasAssets.map((asset, index) => {
-      const width = 1280
-      const height = 720
-      const x = index === 0 ? 80 : 80 + index * (width + GAP)
-      const y = 80
-      const imageUrl = window.api.toFileUrl(asset.path)
-      const html = `<div style="width:${width}px;height:${height}px;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden;"><img src="${imageUrl}" style="max-width:100%;max-height:100%;object-fit:contain;" /></div>`
-
-      return {
-        id: uid(),
-        name: asset.name.replace(/\.[a-z0-9]+$/i, ''),
-        width,
-        height,
-        html,
-        script: '',
-        mode: 'html',
-        x,
-        y
-      }
-    })
-  }, [])
-
   // Load canvas state for the active project whenever the project identity changes.
+  // Strictly per-project: no legacy/global fallbacks (those leaked artboards between new drafts).
   useEffect(() => {
     let cancelled = false
+
+    // Reset to empty immediately so the previous project's artboards don't linger
+    // visually while async loads are in flight.
+    setArtboards([])
 
     try {
       const raw = localStorage.getItem(storageKey)
@@ -939,29 +911,11 @@ export function CanvasPanel({ projectStorageKey, assets = [] }: { projectStorage
         }
       }
     } catch {
-      // Fall back to empty state below.
+      // Fall back to backend load below.
     }
 
-    try {
-      const legacyRaw = localStorage.getItem(legacyStorageKey)
-      if (legacyRaw) {
-        const legacyParsed = JSON.parse(legacyRaw) as Artboard[]
-        const normalized = normalizeArtboards(legacyParsed)
-        if (!cancelled) {
-          setArtboards(normalized)
-        }
-        localStorage.setItem(storageKey, JSON.stringify(normalized))
-        return () => {
-          cancelled = true
-        }
-      }
-    } catch {
-      // Fall back to empty state below.
-    }
-
-    // Try file-based persistent state first (survives app updates and origin changes)
     if (typeof window !== 'undefined' && window.api?.loadCanvasState) {
-      void window.api.loadCanvasState().then((result) => {
+      void window.api.loadCanvasState(projectStorageKey).then((result) => {
         if (cancelled || !result.ok || !Array.isArray(result.artboards) || result.artboards.length === 0) return
         const normalized = normalizeArtboards(result.artboards as Artboard[])
         if (!cancelled) setArtboards(normalized)
@@ -969,21 +923,10 @@ export function CanvasPanel({ projectStorageKey, assets = [] }: { projectStorage
       }).catch(() => undefined)
     }
 
-    if (typeof window !== 'undefined' && window.api?.recoverLegacyCanvasState) {
-      void window.api.recoverLegacyCanvasState().then((result) => {
-        if (cancelled || !result.ok || !Array.isArray(result.artboards) || result.artboards.length === 0) return
-        const normalized = normalizeArtboards(result.artboards as Artboard[])
-        setArtboards(normalized)
-        localStorage.setItem(storageKey, JSON.stringify(normalized))
-      }).catch(() => undefined)
-    }
-
-    if (!cancelled) setArtboards([])
-
     return () => {
       cancelled = true
     }
-  }, [assets, buildArtboardsFromMediaAssets, legacyStorageKey, normalizeArtboards, storageKey])
+  }, [normalizeArtboards, projectStorageKey, storageKey])
 
   const [resolvedHtmlMap, setResolvedHtmlMap] = useState<Map<string, string>>(new Map())
 
@@ -1057,9 +1000,9 @@ export function CanvasPanel({ projectStorageKey, assets = [] }: { projectStorage
   // Save canvas state to main process whenever artboards change
   useEffect(() => {
     if (typeof window !== 'undefined' && window.api?.saveCanvasState) {
-      void window.api.saveCanvasState(artboards)
+      void window.api.saveCanvasState(artboards, projectStorageKey)
     }
-  }, [artboards])
+  }, [artboards, projectStorageKey])
 
   // Live preview: update iframe while typing (html mode only)
   useEffect(() => {
