@@ -243,6 +243,8 @@ COMMANDS:
   remove-asset <assetId> [--delete-file]
                           Remove an asset from the project (and its clips). Pass --delete-file
                           to also unlink the file on disk.
+  verify-assets           Audit all assets — report any with non-absolute paths, missing
+                          files, or zero duration (use after import-heavy workflows).
   undo                    Undo the last project change
   redo                    Redo the last undone change
 
@@ -459,6 +461,33 @@ async function main(): Promise<void> {
           }
           const result = await callLiveApp('import_files', { paths })
           console.log(`Imported ${result.length} files`)
+          for (const asset of result) {
+            console.log(`  ${asset.id}  ${asset.path}  (duration=${asset.duration ?? '?'}s)`)
+          }
+          return
+        }
+
+        case 'verify-assets': {
+          const state = await callLiveApp('list_assets', {})
+          const assets = Array.isArray(state) ? state : []
+          const issues: string[] = []
+          for (const a of assets) {
+            const p = a?.path
+            if (!p || typeof p !== 'string') {
+              issues.push(`${a?.id ?? '?'}  missing path`)
+              continue
+            }
+            if (!isAbsolute(p)) issues.push(`${a.id}  ${a.name}  NON-ABSOLUTE path: ${p}`)
+            else if (!existsSync(p)) issues.push(`${a.id}  ${a.name}  FILE MISSING: ${p}`)
+            else if (a.duration === 0 && a.type !== 'image') issues.push(`${a.id}  ${a.name}  zero duration: ${p}`)
+          }
+          if (issues.length === 0) {
+            console.log(`All ${assets.length} assets OK (paths absolute, files exist, durations non-zero).`)
+          } else {
+            console.error(`Found ${issues.length} issue(s) across ${assets.length} assets:`)
+            for (const issue of issues) console.error('  ' + issue)
+            process.exit(1)
+          }
           return
         }
 

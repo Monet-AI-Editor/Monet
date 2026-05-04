@@ -10,6 +10,15 @@
 
 Never give up after the first "command not found" — try the fallbacks before reaching for raw `curl localhost:51847` or random workarounds. Prefer `editorctl` over the HTTP bridge: it always knows the current command surface and arg shapes.
 
+## ⚠️ ABSOLUTE PATHS ONLY — MANDATORY
+
+**Always pass absolute paths to `editorctl import`.** Relative paths (e.g. `remotion-renders/clip.mp4`) historically caused assets to play as black frames because the Monet main process resolves them against its own cwd, not the terminal's. The CLI now resolves and rejects missing files, but you must still:
+
+- ✅ `editorctl import "/Users/me/Documents/Monet Projects/remotion-renders/clip.mp4"`
+- ❌ `editorctl import remotion-renders/clip.mp4`
+- After any import, the CLI prints `<assetId>  <absolute path>  (duration=Ns)`. **Read that line and verify duration > 0.** If duration is 0 on a video/audio file, the file is corrupt or unreadable — don't add it to the timeline.
+- After import-heavy workflows (Remotion renders, batch imports), run `editorctl verify-assets` to catch any silent breakage. It exits non-zero on missing/non-absolute/zero-duration assets.
+
 ## ⚠️ OUTPUT FILE NAMING — MANDATORY (read this first)
 
 **Never reuse a filename when editing or regenerating a video or image.** Electron/Chromium and the asset cache hold onto the previous file by path, so writing to the same name silently shows the old content. Every edit/regenerate must produce a **new unique filename**.

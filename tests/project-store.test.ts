@@ -93,3 +93,29 @@ test('generateCaptionsForAsset creates caption clips from transcript segments', 
   assert.equal(captionTrack?.clips[0]?.label, 'Hello world')
   assert.equal(captionTrack?.clips[1]?.label, 'Monet captions')
 })
+
+test('importFiles always stores absolute paths (regression: relative paths caused black-frame playback)', () => {
+  const store = new ProjectStore()
+  store.createProject('Absolute Path Test')
+  const tempDir = mkdtempSync(join(tmpdir(), 'monet-abs-'))
+  const fileName = 'clip.png'
+  const absolute = join(tempDir, fileName)
+  writeFileSync(absolute, 'x')
+
+  // Simulate the editorctl bug: caller passes a relative path. Even if the
+  // CLI's resolution layer is removed or bypassed (e.g. via MCP), the store
+  // must NEVER store a non-absolute path on the asset record — the renderer
+  // would otherwise resolve it against Monet's cwd and play black frames.
+  const originalCwd = process.cwd()
+  try {
+    process.chdir(tempDir)
+    const [asset] = store.importFiles([fileName])
+    assert.ok(asset, 'asset should exist')
+    assert.ok(
+      asset.path.startsWith('/') || /^[A-Za-z]:\\/.test(asset.path),
+      `asset.path must be absolute, got: ${asset.path}`
+    )
+  } finally {
+    process.chdir(originalCwd)
+  }
+})
