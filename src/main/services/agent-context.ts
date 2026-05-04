@@ -112,6 +112,12 @@ If the user's message contains **any** URL or domain (\`spotify.com\`, \`https:/
 ### 6. Never destroy user work
 Do **not** run \`canvas-clear\`, \`canvas-delete-frame\`, \`canvas_clear\`, \`canvas_delete_frame\` unless the user **explicitly** asked to delete/clear. Adding a new frame does not require clearing first.
 
+### 7. Ask when destination is ambiguous
+A request like *"build me an ad for X"* or *"make me a Y in HTML"* doesn't tell you whether the user wants a **video file on the timeline** (Remotion) or a **live frame in the canvas tab** (Monet HTML/Paper/Matter frame). \`activeView\` is a hint, not a final answer — the user might be in editor mode but expect a canvas frame, or vice versa. **Ask one short clarifying question first** unless the request unambiguously names the destination (e.g. "add a title card to the timeline" → editor; "draw on the canvas" → canvas).
+
+### 8. Try editorctl before curl — always
+Every supported operation has an \`editorctl\` command. If \`editorctl --help\` doesn't show a flag you expect, **search the help output more carefully or look at \`canvas-run-paperjs\` / \`canvas-run-matterjs\` / \`canvas-run-html\` patterns** before falling back to \`curl localhost:51847\`. The HTTP bridge exists for genuinely missing operations, not for ones the agent didn't find. Falling back to curl in a loop ("canvas_set_html → canvas_run_html → canvas_update_frame") is a sign you should have used \`editorctl canvas-run-html\` from the start.
+
 ---
 
 ## Vague-prompt routing — pick the right tool first
@@ -406,6 +412,7 @@ editorctl canvas-frames                            # list all frames (id, name, 
 editorctl canvas-add-frame <name> <w> <h> [mode]   # mode: paperjs|matterjs|html (default paperjs)
 editorctl canvas-run-paperjs <frameId> "<script>"
 editorctl canvas-run-matterjs <frameId> "<script>"
+editorctl canvas-run-html <frameId> "<html>"
 editorctl canvas-update-frame <frameId> [name=X] [width=N] [height=N]
 editorctl canvas-add-image <path>                  # add a generated/imported image as a frame
 editorctl canvas-set-zoom <zoom>                   # 0.05 .. 8.0

@@ -276,6 +276,9 @@ CANVAS COMMANDS (Monet Canvas tab — requires live app):
                           Pre-destructured: Engine, Render, Runner, Bodies, Body,
                           Composite, World, Constraint, Events, Mouse, MouseConstraint
                           Variables: width, height, engine, render
+  canvas-run-html <frameId> <html>
+                          Set the HTML content of an existing canvas frame
+                          (mode flips to html). Use for static HTML/CSS scenes.
   canvas-update-frame <frameId> [name=<name>] [width=<w>] [height=<h>]
                           Update frame metadata
   canvas-delete-frame <frameId>
@@ -966,6 +969,20 @@ async function main(): Promise<void> {
           }
           await callLiveApp('canvas-update-frame', { id: frameId, mode: 'matterjs', script })
           console.log(`Matter.js scene applied to frame ${frameId}`)
+          return
+        }
+
+        case 'canvas-run-html': {
+          const [, frameId, ...htmlParts] = args
+          const html = htmlParts.join(' ')
+          if (!frameId || !html) {
+            console.error('Usage: editorctl canvas-run-html <frameId> <html>')
+            console.error('  Sets the HTML content of an existing canvas frame.')
+            console.error('  Example: editorctl canvas-run-html frame_123 "<h1 style=\'color:#fff\'>Hi</h1>"')
+            process.exit(1)
+          }
+          await callLiveApp('canvas-update-frame', { id: frameId, mode: 'html', html })
+          console.log(`HTML applied to frame ${frameId}`)
           return
         }
 

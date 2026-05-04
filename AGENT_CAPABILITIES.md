@@ -159,8 +159,10 @@ Pull out: background/surface colors, primary/accent colors, text colors, font fa
 Live interactive frames can be placed on the canvas using physics (Matter.js) or vector graphics (Paper.js).
 
 ```bash
-editorctl canvas-add-frame "My Frame" 390 844 matterjs   # create a Matter.js frame
-editorctl canvas-run-matterjs <frameId> "<script>"        # apply/update the physics script
+editorctl canvas-add-frame "My Frame" 390 844 matterjs   # mode: matterjs|paperjs|html
+editorctl canvas-run-matterjs <frameId> "<script>"        # apply/update Matter.js physics script
+editorctl canvas-run-paperjs  <frameId> "<script>"        # apply/update Paper.js drawing script
+editorctl canvas-run-html     <frameId> "<html>"          # set HTML content (mode flips to html)
 editorctl canvas-frames                                    # list all frame IDs
 editorctl canvas-done                                      # dismiss loading overlay
 ```

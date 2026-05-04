@@ -228,8 +228,10 @@ engine.gravity.y = 1;
 
 ### CLI
 ```bash
-editorctl canvas-add-frame "Name" 390 844 matterjs
+editorctl canvas-add-frame "Name" 390 844 matterjs        # matterjs|paperjs|html
 editorctl canvas-run-matterjs <frameId> "$(cat script.js)"
+editorctl canvas-run-paperjs  <frameId> "$(cat script.js)"
+editorctl canvas-run-html     <frameId> "$(cat scene.html)"
 editorctl canvas-frames
 editorctl canvas-done
 ```

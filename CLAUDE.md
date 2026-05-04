@@ -276,8 +276,10 @@ Render.create({ element: document.body }); // creates invisible second canvas
 
 ### Canvas CLI commands
 ```bash
-editorctl canvas-add-frame "My Frame" 390 844 matterjs        # create new frame
-editorctl canvas-run-matterjs <frameId> "$(cat script.js)"    # apply script
+editorctl canvas-add-frame "My Frame" 390 844 matterjs        # create new frame (matterjs|paperjs|html)
+editorctl canvas-run-matterjs <frameId> "$(cat script.js)"    # apply Matter.js script
+editorctl canvas-run-paperjs  <frameId> "$(cat script.js)"    # apply Paper.js script
+editorctl canvas-run-html     <frameId> "$(cat scene.html)"   # set HTML content (mode flips to html)
 editorctl canvas-frames                                        # list frames + IDs
 editorctl canvas-done                                          # clear loading overlay
 ```
