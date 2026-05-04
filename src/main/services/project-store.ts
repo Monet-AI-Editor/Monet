@@ -1,4 +1,4 @@
-import { basename, dirname, extname } from 'path'
+import { basename, dirname, extname, isAbsolute, resolve as resolvePath } from 'path'
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs'
 import { execFileSync } from 'child_process'
 import type {
@@ -341,15 +341,21 @@ export class ProjectStore {
     this.captureHistory()
 
     const now = Date.now()
+    // Resolve any relative paths to absolute. Without this the renderer
+    // can't locate the file (different cwd) and the asset plays as black.
+    const projectDir = this.projectFilePath
+      ? dirname(this.projectFilePath)
+      : process.cwd()
     const importedAssets = filePaths.map((filePath) => {
-      const name = basename(filePath)
-      const type = inferMediaType(filePath)
+      const absolutePath = isAbsolute(filePath) ? filePath : resolvePath(projectDir, filePath)
+      const name = basename(absolutePath)
+      const type = inferMediaType(absolutePath)
       return {
         id: createId('asset'),
         name,
-        path: filePath,
+        path: absolutePath,
         type,
-        duration: probeMediaDuration(filePath, type),
+        duration: probeMediaDuration(absolutePath, type),
         createdAt: now,
         updatedAt: now,
         semantic: buildSemanticAnnotation(name, type)

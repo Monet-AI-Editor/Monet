@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { request as httpRequest } from 'http'
-import { dirname, join } from 'path'
+import { dirname, join, isAbsolute, resolve } from 'path'
 import { tmpdir } from 'os'
 
 const PORT_FILE = join(tmpdir(), 'monet-api-port')
@@ -442,9 +442,19 @@ async function main(): Promise<void> {
         }
 
         case 'import': {
-          const paths = args.slice(1)
-          if (paths.length === 0) {
+          const rawPaths = args.slice(1)
+          if (rawPaths.length === 0) {
             console.error('Usage: editorctl import <path1> [path2...]')
+            process.exit(1)
+          }
+          // Resolve to absolute against the CLI's cwd. The Monet main process
+          // has a different cwd, so relative paths would otherwise fail to
+          // resolve and the imported asset would play as black frames.
+          const paths = rawPaths.map((p) => (isAbsolute(p) ? p : resolve(process.cwd(), p)))
+          const missing = paths.filter((p) => !existsSync(p))
+          if (missing.length > 0) {
+            console.error('File(s) not found:')
+            for (const m of missing) console.error('  ' + m)
             process.exit(1)
           }
           const result = await callLiveApp('import_files', { paths })
