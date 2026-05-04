@@ -1,5 +1,15 @@
 # AI Video Editor — Agent Control Reference
 
+## ⚠️ FINDING `editorctl` — MANDATORY (read this first)
+
+`editorctl` is the Monet CLI. Always try it directly first — Monet keeps it on `PATH` for every shell it spawns and persists the bin dir to `~/.zshrc` / `~/.bash_profile` so it survives subshells and PATH-rewriting wrappers. **If `command -v editorctl` returns nothing**, fall back in order:
+
+1. `"$HOME/Library/Application Support/Monet/bin/editorctl"` — macOS install (most users)
+2. `node /Applications/Monet.app/Contents/Resources/app.asar.unpacked/out/cli/cli/editorctl.js …`
+3. `node ./out/cli/cli/editorctl.js …` — dev tree
+
+Never give up after the first "command not found". Prefer `editorctl` over raw `curl localhost:51847` — it always exposes the current command surface and arg shapes.
+
 ## ⚠️ OUTPUT FILE NAMING — MANDATORY (read this first)
 
 **Never reuse a filename when editing or regenerating a video or image.** The asset cache holds the previous file by path, so writing to the same name silently shows stale content. Every edit/regenerate must produce a **new unique filename** (e.g. `clip_v1.mp4`, `clip_v2.mp4`, or a timestamp suffix). Applies to all video renders, image generations, canvas exports, and thumbnails. If a target path already exists, append `_v2`, `_v3`, … — do not overwrite.
@@ -250,6 +260,9 @@ npx remotion render remotion/src/index.ts <ID> out.mp4 --props '{"key":"value"}'
 | `HtmlInCanvasGlitch` | `title`, `subtitle`, `glitchIntensity` (0–40), `backgroundColor`, `textColor`, `accentColor` — 180 frames @ 30fps. RGB-split glitch via `<HtmlInCanvas>` |
 
 ### HTML-in-canvas (Remotion ≥ 4.0.455)
+
+> ⚠️ **Naming collision — read first.** Remotion `<HtmlInCanvas>` (this section) produces a **video file** for the timeline. **Monet canvas HTML frames** (`canvas-add-frame ... html`, `canvas_update_frame`) produce a **live HTML scene in the canvas-tab artboard**. Different systems. Pick by destination: timeline → Remotion; canvas tab → Monet HTML frame. Never mix the two in one task.
+
 Use [`<HtmlInCanvas>`](https://www.remotion.dev/docs/html-in-canvas) to draw a DOM subtree into a `<canvas>` and post-process with Canvas 2D / WebGL / WebGPU. Best for glitch, magnifying glass, CRT, displacement, hue-rotate effects.
 
 ```tsx

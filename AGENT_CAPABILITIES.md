@@ -1,5 +1,15 @@
 # What Claude Can Do in This Video Editor
 
+## ⚠️ FINDING `editorctl` — MANDATORY (read this first)
+
+`editorctl` is the Monet CLI. Run `editorctl …` directly — Monet keeps it on `PATH` for every shell it starts (the bin dir is also persisted to `~/.zshrc` / `~/.bash_profile` so it survives subshells and PATH-rewriting wrappers). **If `command -v editorctl` returns nothing**, fall back in order:
+
+1. `"$HOME/Library/Application Support/Monet/bin/editorctl"` — macOS install (most users)
+2. `node /Applications/Monet.app/Contents/Resources/app.asar.unpacked/out/cli/cli/editorctl.js …`
+3. `node ./out/cli/cli/editorctl.js …` — dev tree
+
+Never give up after the first "command not found" — try the fallbacks. Prefer `editorctl` over raw `curl localhost:51847` calls.
+
 ## ⚠️ OUTPUT FILE NAMING — MANDATORY (read this first)
 
 **Never reuse a filename when editing or regenerating a video or image.** The asset cache holds onto the previous file by path, so writing to the same name silently shows the stale content. Every edit/regenerate must produce a **new unique filename** (e.g. `clip_v1.mp4`, `clip_v2.mp4`, or a timestamp suffix). Applies to all video renders, image generations, canvas exports, and thumbnails. If a target path already exists, append `_v2`, `_v3`, … — do not overwrite.
@@ -183,6 +193,8 @@ npm run remotion:render          # Render from CLI
 - `HtmlInCanvasGlitch` — RGB-split glitch using `<HtmlInCanvas>` (Remotion ≥ 4.0.455)
 
 **HTML-in-canvas (Remotion ≥ 4.0.455):** `<HtmlInCanvas>` lets you draw a live DOM tree into a `<canvas>` and post-process with Canvas 2D / WebGL / WebGPU — perfect for glitch, magnifying glass, CRT, displacement effects. Author inside `onPaint({ canvas, element, elementImage })`; always call `ctx.drawElementImage(...)` and reapply the returned transform to `element.style.transform`. Never nest `<HtmlInCanvas>` inside another. `Config.setChromiumOpenGlRenderer('angle')` is already set in `remotion.config.ts` so WebGL renders work out of the box.
+
+> ⚠️ **Don't conflate this with Monet canvas HTML frames.** Remotion `<HtmlInCanvas>` produces a **video file** for the timeline. Monet canvas HTML frames (`canvas-add-frame ... html`, `canvas_update_frame`) produce a **live HTML scene inside the canvas-tab artboard**. Different systems, different outputs. Pick by destination: timeline/video → Remotion; canvas tab → Monet HTML frame.
 
 **Workflow:** edit `remotion/src/compositions/`, register in `remotion/src/Root.tsx`, render via MCP → auto-imported as Monet asset.
 

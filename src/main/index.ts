@@ -9,7 +9,7 @@ import { createHash } from 'crypto'
 import { execFile, spawn } from 'child_process'
 import * as https from 'https'
 import * as http from 'http'
-import { tmpdir } from 'os'
+import { tmpdir, homedir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ProjectStore } from './services/project-store'
 import { ToolRegistry } from './services/tool-registry'
@@ -607,12 +607,10 @@ function buildAgentWrapperScript(binaryName: string, startupPrompt: string): str
   if (binaryName === 'claude') {
     return `#!/bin/sh
 SELF_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
-ORIGINAL_PATH="$(printf '%s' "$PATH" | awk -v self="$SELF_DIR" 'BEGIN{RS=":"; ORS=":"} $0 != self { print }' | sed 's/:$//')"
-if [ -n "$ORIGINAL_PATH" ]; then
-  PATH="$ORIGINAL_PATH"
-  export PATH
-fi
-TARGET="$(command -v claude)"
+# Use stripped PATH only to locate the real claude binary (avoids wrapper recursion).
+# Then exec it with the ORIGINAL PATH intact so editorctl stays accessible in subshells.
+STRIPPED_PATH="$(printf '%s' "$PATH" | awk -v self="$SELF_DIR" 'BEGIN{RS=":"; ORS=":"} $0 != self { print }' | sed 's/:$//')"
+TARGET="$(PATH="$STRIPPED_PATH" command -v claude)"
 if [ -z "$TARGET" ]; then
   echo "claude could not be found on PATH." >&2
   exit 1
@@ -637,6 +635,48 @@ else
   exec "$TARGET" -s danger-full-access "$@"
 fi
 `
+}
+
+const SHELL_RC_BEGIN = '# >>> Monet editorctl PATH (managed — do not edit) >>>'
+const SHELL_RC_END = '# <<< Monet editorctl PATH (managed — do not edit) <<<'
+
+async function persistMonetBinOnShellRc(binDir: string): Promise<void> {
+  const home = homedir()
+  if (!home) return
+  const block = `${SHELL_RC_BEGIN}\nexport PATH="${binDir}:$PATH"\n${SHELL_RC_END}`
+  const targets = ['.zshrc', '.zprofile', '.bash_profile', '.bashrc', '.profile']
+  for (const name of targets) {
+    const file = join(home, name)
+    let existing = ''
+    try {
+      existing = await readFile(file, 'utf8')
+    } catch {
+      // file doesn't exist; we'll create it for the dotfiles users actually source
+      // skip files that don't already exist EXCEPT .zshrc which is the macOS default for interactive shells
+      if (name !== '.zshrc') continue
+      existing = ''
+    }
+
+    const beginIdx = existing.indexOf(SHELL_RC_BEGIN)
+    const endIdx = existing.indexOf(SHELL_RC_END)
+    let next: string
+    if (beginIdx >= 0 && endIdx > beginIdx) {
+      const before = existing.slice(0, beginIdx).replace(/\s+$/, '')
+      const after = existing.slice(endIdx + SHELL_RC_END.length).replace(/^\s+/, '')
+      const middle = `${before ? before + '\n\n' : ''}${block}\n`
+      next = after ? `${middle}\n${after}` : middle
+    } else {
+      const trimmed = existing.replace(/\s+$/, '')
+      next = trimmed ? `${trimmed}\n\n${block}\n` : `${block}\n`
+    }
+
+    if (next === existing) continue
+    try {
+      await writeFile(file, next, 'utf8')
+    } catch (error) {
+      console.warn(`[Monet] Failed to update ${file}:`, error)
+    }
+  }
 }
 
 async function ensureEditorctlShim(): Promise<{ shimPath: string | null; binDir: string; zdotdir: string }> {
@@ -665,6 +705,11 @@ exit 1
 `
   await writeFile(shimPath, script, 'utf8')
   await chmod(shimPath, 0o755)
+
+  // Persist Monet bin dir on the user's interactive shell PATH so editorctl
+  // is reachable from every shell — including ones spawned by agent CLIs that
+  // may strip or rewrite PATH before exec. Idempotent managed block.
+  await persistMonetBinOnShellRc(binDir)
 
   const startupPrompt =
     'You are already inside Monet, an AI-first video editor, in Monet\\\'s built-in terminal. Assume questions are about Monet\\\'s current live project unless the user clearly says otherwise. Read ./MONET_AGENT_CONTEXT.md first. Before answering any request about the app, the project, screenshots, assets, clips, media, or timeline, inspect live state with editorctl get-state and editorctl list-assets. Prefer editorctl over raw localhost API calls. Only fall back to the Monet API bridge if editorctl does not expose the operation or editorctl is failing. Do not guess localhost commands or endpoints. Do not begin by searching the surrounding filesystem unless the user explicitly asks about files on disk outside Monet.'

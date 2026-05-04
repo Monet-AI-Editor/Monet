@@ -1,5 +1,15 @@
 # Monet — Claude Agent Guide
 
+## ⚠️ FINDING `editorctl` — MANDATORY (read this first)
+
+`editorctl` is the Monet CLI. Run `editorctl …` directly — it is on `PATH` for every shell Monet starts. **If — and only if — `command -v editorctl` returns nothing, fall back to one of these absolute paths in order:**
+
+1. `"$HOME/Library/Application Support/Monet/bin/editorctl"` (macOS install — most users)
+2. `/Applications/Monet.app/Contents/Resources/app.asar.unpacked/out/cli/cli/editorctl.js` (run via `node`)
+3. `./out/cli/cli/editorctl.js` (dev tree, run via `node`)
+
+Never give up after the first "command not found" — try the fallbacks before reaching for raw `curl localhost:51847` or random workarounds. Prefer `editorctl` over the HTTP bridge: it always knows the current command surface and arg shapes.
+
 ## ⚠️ OUTPUT FILE NAMING — MANDATORY (read this first)
 
 **Never reuse a filename when editing or regenerating a video or image.** Electron/Chromium and the asset cache hold onto the previous file by path, so writing to the same name silently shows the old content. Every edit/regenerate must produce a **new unique filename**.
@@ -127,6 +137,11 @@ npx remotion render remotion/src/index.ts TitleCard out.mp4 --props '{"title":"H
 | `HtmlInCanvasGlitch` | HTML-in-canvas RGB-split glitch | `title`, `subtitle`, `glitchIntensity`, `backgroundColor`, `textColor`, `accentColor` |
 
 ### HTML-in-canvas (Remotion ≥ 4.0.455)
+
+> ⚠️ **Naming collision — read this first.** Remotion's **`<HtmlInCanvas>`** is a *video-rendering* primitive used in compositions under `remotion/src/compositions/`. It is **NOT** the same thing as a **Monet canvas HTML frame** (the canvas-tab artboard kind, created with `editorctl canvas-add-frame ... html` and updated via `canvas_update_frame`). They look similar in name but live in completely different systems:
+> - **Remotion `<HtmlInCanvas>`** → video file output via `npm run remotion:studio` / `video_editor_render_remotion`. Use it when the user wants a clip on the timeline.
+> - **Monet canvas HTML frame** → live HTML/CSS scene rendered inside the canvas-tab artboard. Use it when the user is in canvas mode and wants a static or looping HTML scene.
+> If the user is in canvas mode, default to a Monet canvas HTML frame; if they ask for a "transition" or "video" or anything destined for the timeline, use Remotion `<HtmlInCanvas>` instead. Never mix the two in one task.
 
 We support [`<HtmlInCanvas>`](https://www.remotion.dev/docs/html-in-canvas) — draw a live DOM node into a `<canvas>` and post-process it with Canvas 2D / WebGL / WebGPU. Use this for effects that are easier to express as DOM + shader than to recreate in pure canvas (glitch, magnifying glass, CRT, hue-rotate, displacement, vintage screen).
 
