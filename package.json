@@ -1,7 +1,7 @@
 {
   "name": "monet",
   "productName": "Monet",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "author": "Het Patel",
   "description": "Electron video editor with terminal-first controls, transcription, embeddings, and export",
   "build": {
