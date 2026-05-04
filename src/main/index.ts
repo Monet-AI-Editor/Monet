@@ -3,6 +3,10 @@ import * as SentryMain from '@sentry/electron/main'
 import { app, shell, BrowserWindow, ipcMain, dialog, net, protocol, powerMonitor, Menu, nativeImage } from 'electron'
 import { createReadStream, createWriteStream } from 'fs'
 import { join, extname, basename, dirname, resolve as resolvePath } from 'path'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 import { readFile, writeFile, stat, readdir, mkdir, chmod, access, rename, rm } from 'fs/promises'
 import { Readable } from 'stream'
 import { createHash } from 'crypto'

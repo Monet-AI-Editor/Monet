@@ -1,6 +1,6 @@
 import type { Server } from 'http'
 import { BrowserWindow } from 'electron'
-import { request as httpRequest } from 'http'
+import { request as httpRequest, createServer as createHttpServer } from 'http'
 import type { ProjectStore } from './project-store'
 import type { TranscriptionService } from './transcription-service'
 import type { SettingsStore } from './settings-store'
@@ -13,7 +13,7 @@ import type { MediaAssetRecord } from '../../shared/editor'
 import { searchSegments, searchSegmentsWithVectors, semanticSearch, semanticSearchWithVectors } from './semantic-index'
 import { dirname, join, basename, extname } from 'path'
 import { homedir } from 'os'
-import { readFile } from 'fs/promises'
+import { readFile, writeFile as writeFileAsync } from 'fs/promises'
 import { existsSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 
@@ -858,9 +858,7 @@ export class APIBridge {
 
   start(): void {
     if (this.server) return
-    const http = require('http')
-
-    this.server = http.createServer(async (req: any, res: any) => {
+    this.server = createHttpServer(async (req: any, res: any) => {
       res.setHeader('Access-Control-Allow-Origin', '*')
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
@@ -2234,8 +2232,7 @@ export class APIBridge {
 
         const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
         const buffer = Buffer.from(base64, 'base64')
-        const fs = require('fs/promises') as typeof import('fs/promises')
-        await fs.writeFile(outputPath, buffer)
+        await writeFileAsync(outputPath, buffer)
         return { ok: true, frameId, outputPath, bytes: buffer.length }
       }
 
@@ -2244,9 +2241,8 @@ export class APIBridge {
         const path = typeof args.path === 'string' ? args.path : null
         if (!path) throw new Error('canvas-export-to-path requires args.path')
         const artboards = this.canvasStateProvider ? this.canvasStateProvider() : []
-        const fs = require('fs/promises') as typeof import('fs/promises')
         const payload = { version: 1, exportedAt: new Date().toISOString(), artboards }
-        await fs.writeFile(path, JSON.stringify(payload, null, 2), 'utf8')
+        await writeFileAsync(path, JSON.stringify(payload, null, 2), 'utf8')
         return { ok: true, path, frameCount: Array.isArray(artboards) ? artboards.length : 0 }
       }
 
@@ -2254,8 +2250,7 @@ export class APIBridge {
       case 'canvas_import_from_path': {
         const path = typeof args.path === 'string' ? args.path : null
         if (!path) throw new Error('canvas-import-from-path requires args.path')
-        const fs = require('fs/promises') as typeof import('fs/promises')
-        const raw = await fs.readFile(path, 'utf8')
+        const raw = await readFile(path, 'utf8')
         const parsed = JSON.parse(raw)
         const artboards = Array.isArray(parsed)
           ? parsed
