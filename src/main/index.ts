@@ -193,6 +193,11 @@ function getAppIconPath(): string {
   return join(base, 'resources', 'monet-mark.png')
 }
 
+function getRemotionSkillDir(): string {
+  const base = app.isPackaged ? process.resourcesPath : app.getAppPath()
+  return join(base, 'resources', 'remotion-skill')
+}
+
 function applyAppBranding(): void {
   const iconPath = getAppIconPath()
   const icon = nativeImage.createFromPath(iconPath)
@@ -1065,7 +1070,7 @@ app.whenReady().then(async () => {
     safeBroadcast('project:updated', project)
     const summary = getProjectSummary(project)
     for (const cwd of terminalService.getSessionDirectories()) {
-      void ensureAgentContextFiles(cwd, summary, shimBinDir).catch((error) => {
+      void ensureAgentContextFiles(cwd, summary, shimBinDir, getRemotionSkillDir()).catch((error) => {
         console.warn('[Terminal] Failed to refresh agent context files:', error)
       })
     }
@@ -1860,7 +1865,7 @@ app.whenReady().then(async () => {
         activeSequenceName: activeSequence?.name ?? null,
         activeSequenceDuration: activeSequence?.duration ?? null,
         assetNames: project.assets.slice(0, 8).map((asset) => asset.name)
-      }, binDir)
+      }, binDir, getRemotionSkillDir())
       terminalService.sendOutput(
         session.id,
         '\x1b[96mMonet agent context ready.\x1b[0m\r\n' +

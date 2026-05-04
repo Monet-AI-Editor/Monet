@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'fs/promises'
+import { cp, mkdir, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 
 export interface AgentContextProjectSummary {
@@ -32,7 +32,8 @@ const GUIDE_FILES = {
 export async function ensureAgentContextFiles(
   cwd: string,
   summary: AgentContextProjectSummary,
-  binDir?: string
+  binDir?: string,
+  remotionSkillSourceDir?: string
 ): Promise<AgentContextPaths> {
   const guidePath = join(cwd, PRIMARY_CONTEXT_FILE)
   const claudePath = join(cwd, 'CLAUDE.md')
@@ -58,6 +59,20 @@ export async function ensureAgentContextFiles(
   await writeFile(agentsPath, pointerBody, 'utf8')
   for (const [path, body] of topicWrites) {
     await writeFile(path, body, 'utf8')
+  }
+
+  if (remotionSkillSourceDir) {
+    try {
+      const exists = await stat(remotionSkillSourceDir).then(() => true).catch(() => false)
+      if (exists) {
+        await cp(remotionSkillSourceDir, join(guidesDir, 'remotion-skill'), {
+          recursive: true,
+          force: true,
+        })
+      }
+    } catch (error) {
+      console.warn('[agent-context] Failed to copy Remotion skill:', error)
+    }
   }
 
   return {
@@ -122,6 +137,9 @@ Do **not** run \`canvas-clear\`, \`canvas-delete-frame\`, \`canvas_clear\`, \`ca
 
 ### 7. Ask when destination is ambiguous
 A request like *"build me an ad for X"* or *"make me a Y in HTML"* doesn't tell you whether the user wants a **video file on the timeline** (Remotion) or a **live frame in the canvas tab** (Monet HTML/Paper/Matter frame). \`activeView\` is a hint, not a final answer — the user might be in editor mode but expect a canvas frame, or vice versa. **Ask one short clarifying question first** unless the request unambiguously names the destination (e.g. "add a title card to the timeline" → editor; "draw on the canvas" → canvas).
+
+### 8a. Read \`remotion-skill/\` before writing Remotion code
+Before writing or editing any \`remotion/src/compositions/*.tsx\`, read the relevant file in [\`${GUIDES_DIR}/remotion-skill/\`](${GUIDES_DIR}/remotion-skill/) — the official Remotion best-practices skill is bundled with Monet. At minimum read \`remotion-skill/SKILL.md\` plus the rule file matching your task (e.g. \`rules/html-in-canvas.md\` for \`<HtmlInCanvas>\`, \`rules/audio.md\` for soundtracks, \`rules/transitions.md\` for cuts/wipes). Skipping this is the #1 cause of silent Remotion failures (CSS animations not rendering, HtmlInCanvas going blank, fonts missing on render).
 
 ### 8. Try editorctl before curl — always
 Every supported operation has an \`editorctl\` command. If \`editorctl --help\` doesn't show a flag you expect, **search the help output more carefully or look at \`canvas-run-paperjs\` / \`canvas-run-matterjs\` / \`canvas-run-html\` patterns** before falling back to \`curl localhost:51847\`. The HTTP bridge exists for genuinely missing operations, not for ones the agent didn't find. Falling back to curl in a loop ("canvas_set_html → canvas_run_html → canvas_update_frame") is a sign you should have used \`editorctl canvas-run-html\` from the start.
@@ -189,7 +207,7 @@ ${summary.assetNames.length > 0 ? summary.assetNames.map((name) => `  - ${name}`
 
 - [\`01-decision-flow.md\`](${GUIDES_DIR}/${GUIDE_FILES.decisionFlow}) — vague prompt → tool routing decision tree
 - [\`02-editor-vs-canvas.md\`](${GUIDES_DIR}/${GUIDE_FILES.editorVsCanvas}) — the two modes; what each produces; when to switch
-- [\`03-remotion.md\`](${GUIDES_DIR}/${GUIDE_FILES.remotion}) — when to use Remotion, all 11 compositions, HtmlInCanvas
+- [\`03-remotion.md\`](${GUIDES_DIR}/${GUIDE_FILES.remotion}) — when to use Remotion, all 11 compositions, HtmlInCanvas, **+ pointer to bundled official Remotion skill in \`${GUIDES_DIR}/remotion-skill/\`**
 - [\`04-canvas-tools.md\`](${GUIDES_DIR}/${GUIDE_FILES.canvasTools}) — Paper.js, Matter.js, GPT image 2, HTML frames
 - [\`05-editor-tools.md\`](${GUIDES_DIR}/${GUIDE_FILES.editorTools}) — clips, tracks, effects, transitions, search, export
 - [\`06-essentials.md\`](${GUIDES_DIR}/${GUIDE_FILES.essentials}) — finding editorctl, output naming, audio merge, brand fetch
@@ -364,6 +382,55 @@ function buildRemotion(): string {
 Remotion is React-based programmatic video composition. Use it when the desired output is a **video file** with code-driven animation.
 
 > ⚠️ **Never use Remotion when \`activeView = "canvas"\`.** Remotion produces video files for the timeline; canvas frames are live scenes. Different systems.
+
+## ⚠️ READ THE OFFICIAL REMOTION SKILL FIRST
+
+The official Remotion best-practices skill is bundled with Monet at [\`./remotion-skill/\`](./remotion-skill/). Before writing any Remotion code, read:
+
+1. [\`remotion-skill/SKILL.md\`](./remotion-skill/SKILL.md) — top-level rules (asset placement, \`useCurrentFrame\` + \`interpolate\`, \`spring\` motion, font loading, \`<Img>\` / \`<Video>\` / \`<Audio>\` components, render flags). **Hard rule: CSS transitions/animations and Tailwind animation classes do NOT render.**
+2. [\`remotion-skill/rules/\`](./remotion-skill/rules/) — 35 task-specific files. Read the ones that match the request:
+   - \`html-in-canvas.md\` ← **read every time you use \`<HtmlInCanvas>\`** — covers \`onPaint\` signature, \`drawElementImage\` + transform reapply, async \`onPaint\`, WebGL setup, async holds via \`delayRender()\`
+   - \`compositions.md\`, \`sequencing.md\`, \`timing.md\` — composition structure and frame math
+   - \`audio.md\`, \`audio-visualization.md\`, \`voiceover.md\`, \`sfx.md\`, \`silence-detection.md\` — sound
+   - \`videos.md\`, \`images.md\`, \`gifs.md\`, \`transparent-videos.md\`, \`light-leaks.md\` — media
+   - \`google-fonts.md\`, \`local-fonts.md\`, \`measuring-text.md\`, \`text-animations.md\` — typography
+   - \`transitions.md\`, \`3d.md\`, \`lottie.md\`, \`mapbox.md\` — advanced
+   - \`get-video-duration.md\`, \`get-audio-duration.md\`, \`get-video-dimensions.md\`, \`calculate-metadata.md\` — runtime metadata
+   - \`subtitles.md\`, \`display-captions.md\`, \`import-srt-captions.md\`, \`transcribe-captions.md\` — captions
+   - \`tailwind.md\`, \`parameters.md\`, \`trimming.md\`, \`measuring-dom-nodes.md\`, \`ffmpeg.md\` — misc
+
+Skipping these files is the most common cause of broken Remotion output (CSS transitions silently failing, \`HtmlInCanvas\` going blank, fonts not loading on render). Read the file that matches the task BEFORE writing the composition.
+
+## Asset research before authoring
+
+If the user names a brand, product, or real-world thing (Spotify, Linear, Stripe, a specific song, a public figure), do the research **before** opening a TSX file:
+
+1. Resolve the brand → canonical URL. Fetch with \`curl -sL\` or WebFetch.
+2. Extract: hex colors, font family, logo SVG/PNG (\`og:image\`, inline \`<svg>\`, \`<img …logo…>\`), iconography style, any signature motion (Spotify uses big sweeping greens; Linear uses tight micro-animations).
+3. Save the logo to \`remotion/public/\` and reference with \`staticFile('logo.svg')\` + \`<Img>\`. Do **not** inline a hand-drawn SVG approximation when the real one is one curl away.
+4. Hard-code the real hex values. Never use memorized brand colors.
+
+If the fetch fails, stop and ask the user for the missing tokens — do not guess.
+
+## Motion design that doesn't look amateur
+
+Use \`interpolate\` with custom \`Easing\` curves and \`spring\` for any motion. Defaults look generic; great Remotion videos vary easing, stagger entries, and chain motions:
+
+\`\`\`tsx
+import { interpolate, Easing, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+
+const frame = useCurrentFrame();
+const { fps } = useVideoConfig();
+// punchy entry — fast in, gentle settle
+const enter = spring({ frame, fps, config: { damping: 12, stiffness: 180, mass: 0.6 } });
+// custom easing for a more cinematic feel
+const slide = interpolate(frame, [0, 24], [-200, 0], {
+  extrapolateRight: 'clamp',
+  easing: Easing.bezier(0.16, 1, 0.3, 1),
+});
+\`\`\`
+
+For \`<HtmlInCanvas>\` motion: animate the **scene's DOM** with frame-driven inline styles (transform, opacity, filter), then let the canvas effect post-process it. Don't try to drive motion only from the \`onPaint\` callback — the DOM should already be moving when it gets captured.
 
 ## Workflow
 
