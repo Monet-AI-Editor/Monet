@@ -546,6 +546,7 @@ editorctl add-effect clip_1 color_grade brightness=0.1 contrast=1.2 saturation=1
 editorctl add-effect clip_1 fade_in duration=1.0
 editorctl add-effect clip_1 text_overlay text="Hello" x=100 y=100 fontSize=48
 editorctl set-effect-keyframes <clipId> <effectId> <json>
+editorctl remove-effect <clipId> <effectId>
 \`\`\`
 
 ## Properties
@@ -567,10 +568,13 @@ editorctl generate-captions <assetId> [sequenceId]
 ## Search & AI
 
 \`\`\`bash
-editorctl search-segments "<query>" [limit]
+editorctl search-media "<query>" [limit]                            # semantic search over assets
+editorctl search-spoken "<query>" [limit]                            # substring search in transcripts
+editorctl search-segments "<query>" [limit]                          # time-based segment search
 editorctl batch-selects "<query>" [limit] [padding] [sequenceName]   # auto-build a selects sequence
 editorctl batch-markers "<query>" [limit] [seqId]                    # auto-place markers
 editorctl transcribe <assetId> [language]
+editorctl embed-assets [all]                                         # generate embeddings (pass 'all' to re-embed)
 editorctl generate-image "<prompt>" [size] [quality] [background] [format]
 editorctl edit-image "<prompt>" <input1> [...] [mask=<id|path>]
 \`\`\`
@@ -583,16 +587,15 @@ editorctl contact-sheet <assetId> [count]
 editorctl set-playhead <time>
 editorctl select-clip <clipId|none>
 editorctl select-asset <assetId|none>
+editorctl create-sequence <name> [width] [height]
+editorctl undo
+editorctl redo
 editorctl export /absolute/output_v1.mp4 [quality] [resolution] [format]
 \`\`\`
 
 ## API bridge — only when no editorctl equivalent
 
-\`\`\`bash
-curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"undo"}'
-curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"redo"}'
-curl -s -X POST http://localhost:51847 -H 'Content-Type: application/json' -d '{"command":"embed-assets"}'
-\`\`\`
+Every operation listed above has an \`editorctl\` command. Reach for raw \`curl localhost:51847\` **only** if a capability is genuinely missing from the CLI — and prefer telling the user about the gap instead.
 
 ## Editing rules
 

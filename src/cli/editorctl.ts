@@ -233,6 +233,14 @@ COMMANDS:
   set-volume <clipId> <volume>
                           Set volume (0 to 2)
 
+  remove-effect <clipId> <effectId>
+                          Remove an effect from a clip
+
+  create-sequence <name> [width] [height]
+                          Create a new sequence and activate it
+  undo                    Undo the last project change
+  redo                    Redo the last undone change
+
   transcribe <assetId> [language]
                           Transcribe audio with Whisper
   generate-captions <assetId> [seqId]
@@ -240,6 +248,12 @@ COMMANDS:
 
   get-asset-segments <assetId>
                           List searchable segments for an asset
+
+  search-media <query> [limit]
+                          Semantic search over assets (uses embeddings if available)
+  search-spoken <query> [limit]
+                          Substring search within transcripts (run transcribe first)
+  embed-assets [all]      Generate embeddings for assets/segments (pass 'all' to re-embed)
 
   search-segments <query> [limit]
                           Search time-based segments across the project
@@ -281,6 +295,8 @@ CANVAS COMMANDS (Monet Canvas tab — requires live app):
                           (mode flips to html). Use for static HTML/CSS scenes.
   canvas-update-frame <frameId> [name=<name>] [width=<w>] [height=<h>]
                           Update frame metadata
+  canvas-select-frame <frameId|none>
+                          Select (or clear selection of) a canvas frame
   canvas-delete-frame <frameId>
                           Delete a canvas frame
   canvas-clear            Remove all canvas frames
@@ -552,6 +568,21 @@ async function main(): Promise<void> {
           return
         }
 
+        case 'create-sequence': {
+          const [, name, widthStr, heightStr] = args
+          if (!name) {
+            console.error('Usage: editorctl create-sequence <name> [width] [height]')
+            process.exit(1)
+          }
+          const result = await callLiveApp('create_sequence', {
+            name,
+            width: widthStr ? Number(widthStr) : undefined,
+            height: heightStr ? Number(heightStr) : undefined
+          })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
         case 'activate-sequence': {
           const [, sequenceId] = args
           if (!sequenceId) {
@@ -710,6 +741,17 @@ async function main(): Promise<void> {
           return
         }
 
+        case 'remove-effect': {
+          const [, clipId, effectId] = args
+          if (!clipId || !effectId) {
+            console.error('Usage: editorctl remove-effect <clipId> <effectId>')
+            process.exit(1)
+          }
+          await callLiveApp('remove_effect', { clipId, effectId })
+          console.log(`Removed effect ${effectId} from clip ${clipId}`)
+          return
+        }
+
         case 'set-speed': {
           const [, clipId, speedStr] = args
           if (!clipId || !speedStr) {
@@ -766,6 +808,44 @@ async function main(): Promise<void> {
             process.exit(1)
           }
           const result = await callLiveApp('get_asset_segments', { assetId })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'search-media': {
+          const [, query, limitStr] = args
+          if (!query) {
+            console.error('Usage: editorctl search-media <query> [limit]')
+            console.error('  Semantic search over assets (uses embeddings if available, keyword fallback otherwise).')
+            process.exit(1)
+          }
+          const result = await callLiveApp('search_media', {
+            query,
+            limit: limitStr ? parseInt(limitStr, 10) : undefined
+          })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'search-spoken': {
+          const [, query, limitStr] = args
+          if (!query) {
+            console.error('Usage: editorctl search-spoken <query> [limit]')
+            console.error('  Substring search within transcripts. Run `editorctl transcribe <assetId>` first.')
+            process.exit(1)
+          }
+          const result = await callLiveApp('search_spoken', {
+            query,
+            limit: limitStr ? parseInt(limitStr, 10) : undefined
+          })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'embed-assets': {
+          const [, allArg] = args
+          const all = allArg === 'all' || allArg === '--all' || allArg === 'true'
+          const result = await callLiveApp('embed_assets', { all })
           console.log(JSON.stringify(result, null, 2))
           return
         }
@@ -1014,6 +1094,29 @@ async function main(): Promise<void> {
             design: readJsonArgument(designArg)
           })
           console.log(`Updated design frame ${frameId}`)
+          return
+        }
+
+        case 'canvas-select-frame': {
+          const [, frameId] = args
+          if (!frameId) {
+            console.error('Usage: editorctl canvas-select-frame <frameId|none>')
+            process.exit(1)
+          }
+          await callLiveApp('canvas_select_frame', { id: frameId === 'none' ? null : frameId })
+          console.log(`Selected canvas frame: ${frameId}`)
+          return
+        }
+
+        case 'undo': {
+          const result = await callLiveApp('undo', {})
+          console.log(JSON.stringify({ ok: true, projectId: (result as { id?: string })?.id }, null, 2))
+          return
+        }
+
+        case 'redo': {
+          const result = await callLiveApp('redo', {})
+          console.log(JSON.stringify({ ok: true, projectId: (result as { id?: string })?.id }, null, 2))
           return
         }
 
