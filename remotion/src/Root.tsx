@@ -9,6 +9,7 @@ import { AudioVisualizer, audioVisualizerSchema } from './compositions/AudioVisu
 import { LowerThird, lowerThirdSchema } from './compositions/LowerThird'
 import { AnimatedCaptions, animatedCaptionsSchema } from './compositions/AnimatedCaptions'
 import { KineticText, kineticTextSchema } from './compositions/KineticText'
+import { HtmlInCanvasGlitch, htmlInCanvasGlitchSchema } from './compositions/HtmlInCanvasGlitch'
 
 export function Root() {
   return (
@@ -207,6 +208,23 @@ export function Root() {
           fontSize: 120,
           staggerFrames: 4,
           animationStyle: 'rise',
+        }}
+      />
+      <Composition
+        id="HtmlInCanvasGlitch"
+        component={HtmlInCanvasGlitch}
+        durationInFrames={180}
+        fps={30}
+        width={1920}
+        height={1080}
+        schema={htmlInCanvasGlitchSchema}
+        defaultProps={{
+          title: 'GLITCH',
+          subtitle: 'powered by HTML-in-canvas',
+          backgroundColor: '#0a0b0e',
+          textColor: '#e8eaed',
+          accentColor: '#f07178',
+          glitchIntensity: 12,
         }}
       />
     </>

@@ -124,6 +124,16 @@ npx remotion render remotion/src/index.ts TitleCard out.mp4 --props '{"title":"H
 | `LowerThird` | Animated name/title lower third | `name`, `title`, `accentColor`, `position` (left/center/right) |
 | `AnimatedCaptions` | Word-by-word highlighted captions | `words` [{word, startFrame, endFrame}], `highlightColor`, `fontSize`, `position` |
 | `KineticText` | Staggered kinetic word animation | `text`, `animationStyle` (rise/fall/scale/blur), `staggerFrames`, `fontSize` |
+| `HtmlInCanvasGlitch` | HTML-in-canvas RGB-split glitch | `title`, `subtitle`, `glitchIntensity`, `backgroundColor`, `textColor`, `accentColor` |
+
+### HTML-in-canvas (Remotion ≥ 4.0.455)
+
+We support [`<HtmlInCanvas>`](https://www.remotion.dev/docs/html-in-canvas) — draw a live DOM node into a `<canvas>` and post-process it with Canvas 2D / WebGL / WebGPU. Use this for effects that are easier to express as DOM + shader than to recreate in pure canvas (glitch, magnifying glass, CRT, hue-rotate, displacement, vintage screen).
+
+- Already enabled in `remotion.config.ts` via `Config.setChromiumOpenGlRenderer('angle')`, so renders use the right GL backend by default.
+- Author new compositions like `remotion/src/compositions/HtmlInCanvasGlitch.tsx`: wrap children in `<HtmlInCanvas width height onPaint>`, do the post-processing inside `onPaint({ canvas, element, elementImage })`, and **always** call `ctx.drawElementImage(elementImage, x, y)` and assign the returned transform back to `element.style.transform` so input/layout stays correct.
+- **Do NOT nest `<HtmlInCanvas>`** inside another `<HtmlInCanvas>` — Chrome only paints the outer one and Remotion throws. Merge effects into a single `onPaint` callback.
+- Studio preview requires Chrome Canary (≥ 149) with `chrome://flags/#canvas-draw-element` enabled. Renders via `npx remotion render` / `video_editor_render_remotion` work everywhere — Remotion ships its own patched Chromium for rendering.
 
 ### Tips
 - Duration is in **frames** (30fps by default). 150 frames = 5 seconds.

@@ -247,6 +247,32 @@ npx remotion render remotion/src/index.ts <ID> out.mp4 --props '{"key":"value"}'
 |----|-------|
 | `TitleCard` | `title` (str), `subtitle?` (str), `backgroundColor`, `textColor`, `accentColor` — 150 frames @ 30fps |
 | `Slideshow` | `images` (abs path[]), `frameDuration` (frames), `transitionDuration` (frames) — 300 frames @ 30fps |
+| `HtmlInCanvasGlitch` | `title`, `subtitle`, `glitchIntensity` (0–40), `backgroundColor`, `textColor`, `accentColor` — 180 frames @ 30fps. RGB-split glitch via `<HtmlInCanvas>` |
+
+### HTML-in-canvas (Remotion ≥ 4.0.455)
+Use [`<HtmlInCanvas>`](https://www.remotion.dev/docs/html-in-canvas) to draw a DOM subtree into a `<canvas>` and post-process with Canvas 2D / WebGL / WebGPU. Best for glitch, magnifying glass, CRT, displacement, hue-rotate effects.
+
+```tsx
+import { HtmlInCanvas, type HtmlInCanvasOnPaint } from 'remotion'
+
+const onPaint: HtmlInCanvasOnPaint = ({ canvas, element, elementImage }) => {
+  const ctx = canvas.getContext('2d')!
+  ctx.reset()
+  ctx.filter = 'blur(8px)'
+  const transform = ctx.drawElementImage(elementImage, 0, 0)
+  element.style.transform = transform.toString() // <-- always reapply
+}
+
+<HtmlInCanvas width={1920} height={1080} onPaint={onPaint}>
+  <YourDomTree />
+</HtmlInCanvas>
+```
+
+Rules:
+- **Always** reapply the `drawElementImage` return value to `element.style.transform` so layout/input stay correct.
+- **Never** nest `<HtmlInCanvas>` inside another — Chrome paints only the outer one and Remotion throws. Merge effects into one `onPaint`.
+- `Config.setChromiumOpenGlRenderer('angle')` is already set in `remotion.config.ts` so WebGL/WebGPU shaders render correctly via `npx remotion render` and our MCP renderer.
+- Studio preview needs Chrome Canary ≥ 149 with `chrome://flags/#canvas-draw-element` enabled. Renders work everywhere — Remotion ships its own patched Chromium.
 
 ### Adding a composition
 1. Create `remotion/src/compositions/MyComp.tsx` — export `myCompSchema` (zod) + `MyComp` component

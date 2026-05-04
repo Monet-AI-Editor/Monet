@@ -180,6 +180,9 @@ npm run remotion:render          # Render from CLI
 **Built-in compositions:**
 - `TitleCard` — animated title card with spring entrance
 - `Slideshow` — crossfade image slideshow
+- `HtmlInCanvasGlitch` — RGB-split glitch using `<HtmlInCanvas>` (Remotion ≥ 4.0.455)
+
+**HTML-in-canvas (Remotion ≥ 4.0.455):** `<HtmlInCanvas>` lets you draw a live DOM tree into a `<canvas>` and post-process with Canvas 2D / WebGL / WebGPU — perfect for glitch, magnifying glass, CRT, displacement effects. Author inside `onPaint({ canvas, element, elementImage })`; always call `ctx.drawElementImage(...)` and reapply the returned transform to `element.style.transform`. Never nest `<HtmlInCanvas>` inside another. `Config.setChromiumOpenGlRenderer('angle')` is already set in `remotion.config.ts` so WebGL renders work out of the box.
 
 **Workflow:** edit `remotion/src/compositions/`, register in `remotion/src/Root.tsx`, render via MCP → auto-imported as Monet asset.
 

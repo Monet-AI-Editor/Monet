@@ -1,7 +1,7 @@
 {
   "name": "monet",
   "productName": "Monet",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "author": "Het Patel",
   "description": "Electron video editor with terminal-first controls, transcription, embeddings, and export",
   "build": {
@@ -63,10 +63,10 @@
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@remotion/cli": "^4.0.451",
-    "@remotion/media-utils": "^4.0.451",
-    "@remotion/player": "^4.0.451",
-    "@remotion/renderer": "^4.0.451",
+    "@remotion/cli": "^4.0.457",
+    "@remotion/media-utils": "^4.0.457",
+    "@remotion/player": "^4.0.457",
+    "@remotion/renderer": "^4.0.457",
     "@sentry/electron": "^7.11.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-progress": "^0.2.0",
@@ -84,7 +84,7 @@
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "remotion": "^4.0.451",
+    "remotion": "^4.0.457",
     "zod": "^4.3.6"
   },
   "devDependencies": {
