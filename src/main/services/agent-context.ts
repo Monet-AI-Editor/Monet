@@ -106,8 +106,16 @@ When \`activeView=canvas\` and the user asks for something visual, present **onl
 
 There is **no** design mode, editable layers, Figma-style layout, or node-based design. Do not invent a fourth option.
 
-### 5. Brand rule — fetch tokens before designing
-If the user's message contains **any** URL or domain (\`spotify.com\`, \`https://linear.app\`), you must fetch the page and extract brand colors/fonts/logo BEFORE writing canvas/design code. Never use memorized brand colors. If fetch fails, ask the user for the hex values.
+### 5. Brand rule — research before designing (URLs *and* brand names)
+This applies whenever the user names **any** brand — whether they pasted a URL (\`spotify.com\`, \`https://linear.app\`), a domain, or just the brand name itself (*"make me a Notion-style card"*, *"a launch video for Linear"*, *"like Stripe's homepage"*).
+
+**Mandatory steps before any canvas/design/video code:**
+1. Resolve the brand to a canonical homepage URL if the user only gave a name (e.g. \`Linear\` → \`https://linear.app\`).
+2. Fetch the page with \`curl -sL\` or WebFetch and extract real tokens: background/surface colors, primary/accent colors, text colors, font families, font sizes, border-radii, and the logo (\`og:image\`, \`<img …logo…>\`, inline SVG in nav).
+3. Hard-code those exact hex values in the script. Never use memorized brand colors — the brand may have rebranded.
+4. If the fetch fails, **stop and ask the user for the hex values**. Do not guess.
+
+This rule applies to every visual surface: Remotion compositions, canvas Paper.js / Matter.js / HTML frames, generated images, lower thirds, ads — anything with a brand on it.
 
 ### 6. Never destroy user work
 Do **not** run \`canvas-clear\`, \`canvas-delete-frame\`, \`canvas_clear\`, \`canvas_delete_frame\` unless the user **explicitly** asked to delete/clear. Adding a new frame does not require clearing first.
@@ -117,6 +125,31 @@ A request like *"build me an ad for X"* or *"make me a Y in HTML"* doesn't tell 
 
 ### 8. Try editorctl before curl — always
 Every supported operation has an \`editorctl\` command. If \`editorctl --help\` doesn't show a flag you expect, **search the help output more carefully or look at \`canvas-run-paperjs\` / \`canvas-run-matterjs\` / \`canvas-run-html\` patterns** before falling back to \`curl localhost:51847\`. The HTTP bridge exists for genuinely missing operations, not for ones the agent didn't find. Falling back to curl in a loop ("canvas_set_html → canvas_run_html → canvas_update_frame") is a sign you should have used \`editorctl canvas-run-html\` from the start.
+
+### 9. Launch-video / promo workflow — offer the user the choice up front
+For requests like *"create a launch video for X"*, *"make me an ad for Y"*, *"build a promo for Z"*, do **not** silently start in either canvas or timeline. The user has two valid workflows and you should present both before doing the work:
+
+> *"Two ways I can do this:*
+> *1. **Canvas-first** — I draft the visual frames inside Monet's canvas tab (Paper.js / Matter.js / HTML / GPT image 2) so you can review and tweak each frame, then I render selected frames to video and assemble the timeline.*
+> *2. **End-to-end** — I research the brand, design directly in Remotion, render full clips, and drop them on the timeline. Faster but you only see the finished product.*
+> *Which would you like?"*
+
+Then continue per the chosen path. Skip the question only when the user has already named the destination ("just put it on the timeline", "draw it on the canvas") or has a standing preference for autonomous mode (see Rule 11).
+
+### 10. Picking a canvas tool — the right surface for the job
+When the user is in canvas mode and the answer to "which of the 3 canvas options" isn't obvious from the prompt, **briefly explain the trade-off and ask** unless Rule 11 says otherwise. Use this mental model:
+
+| Use… | When the user wants… | Strengths | Weak at |
+|---|---|---|---|
+| **HTML / CSS frame** (\`canvas-run-html\`) | Pixel-accurate UI mocks, marketing layouts, gradients, web-style typography, anything that already exists as a webpage | Real fonts, real CSS animations, easy responsive layout, exact brand UI replication | Custom drawing, particles, true physics |
+| **Paper.js frame** (\`canvas-run-paperjs\`) | Logos, generative art, illustrations, vector shapes, custom drawing, anything you'd do in Illustrator-with-code | Crisp vector output, paths/booleans/groups, deterministic strokes, hit-testing | Realistic physics, complex layout flow |
+| **Matter.js frame** (\`canvas-run-matterjs\`) | Bouncing balls, falling objects, chains, ropes, springs, gravity demos, soft-body sims | Real physics with collisions, constraints, mouse interaction | Fine typography, pixel-accurate mockups |
+| **GPT image 2** (\`generate-image\` + \`canvas-add-image\`) | Photorealistic stills, mood boards, hero shots, anything that needs an actual image | Style flexibility, photorealism, composition variety | Editable shapes, animation, frame-by-frame control |
+
+Prefer the **HTML frame** when reproducing real-world brand surfaces (Linear-style card, Spotify now-playing UI, a SaaS pricing page). Prefer **Paper.js** when the user says "draw" or "logo" or "generative". Prefer **Matter.js** when the user says "physics" or "bouncing" or "simulation".
+
+### 11. Auto vs ask mode
+By default, when the user's intent is ambiguous (rules 7, 9, 10), **ask one short clarifying question**. If the user has said "just decide", "auto mode", "you pick", "do whatever you think is best", or has previously confirmed an autonomous preference, **don't ask** — make the call yourself based on the heuristics above and tell the user what you chose in one sentence ("Going canvas-first with an HTML frame for the brand mock — say so if you wanted Remotion instead.").
 
 ---
 
@@ -131,7 +164,9 @@ Every supported operation has an \`editorctl\` command. If \`editorctl --help\` 
 | "add music / voiceover / cut / trim / transition" | \`editor\` | editorctl timeline ops | [05-editor-tools](${GUIDES_DIR}/${GUIDE_FILES.editorTools}) |
 | "make me an ad / promo / video about X" | \`editor\` | Remotion + timeline | [03-remotion](${GUIDES_DIR}/${GUIDE_FILES.remotion}) + [05-editor-tools](${GUIDES_DIR}/${GUIDE_FILES.editorTools}) |
 | "what's in this video / find clips of X" | \`editor\` | \`search-segments\`, \`batch-selects\` | [05-editor-tools](${GUIDES_DIR}/${GUIDE_FILES.editorTools}) |
-| Anything mentioning a brand URL | either | **Fetch tokens first** | [06-essentials](${GUIDES_DIR}/${GUIDE_FILES.essentials}) |
+| Anything mentioning a brand URL **or brand name** | either | **Fetch tokens first** | [06-essentials](${GUIDES_DIR}/${GUIDE_FILES.essentials}) |
+| "launch video / promo / ad for X" | either | **Ask: canvas-first or end-to-end?** (Rule 9) | [02-editor-vs-canvas](${GUIDES_DIR}/${GUIDE_FILES.editorVsCanvas}) |
+| "Linear-style card / Spotify-style UI / Stripe-style page" | \`canvas\` | **HTML frame** (\`canvas-run-html\`) — best for real-brand UI replication | [04-canvas-tools](${GUIDES_DIR}/${GUIDE_FILES.canvasTools}) |
 
 If the user is in \`canvas\` view, **never** use Remotion. Remotion outputs video files for the timeline; the canvas tab is a live HTML/Paper/Matter artboard. Different systems, different outputs.
 
@@ -310,7 +345,16 @@ The user toggles between Editor and Canvas via the top bar. Each turn, your firs
 - **Generate an image to use in canvas:** \`editorctl generate-image\` → \`editorctl canvas-add-image <path>\`
 - **Generate an image to use on the timeline:** \`editorctl generate-image\` → \`editorctl import <path>\` → \`add-clip\`
 - **Render a Remotion comp and use it on the timeline:** \`video_editor_render_remotion\` (auto-imports)
-- **Take a canvas frame's output to the timeline:** export the frame to PNG/MP4 yourself with a unique filename, then \`editorctl import\`.
+- **Take a canvas frame's output to the timeline:** \`editorctl canvas-render-png <frameId> <out_v1.png>\` → \`editorctl import\`. For motion, render a sequence of frames and assemble.
+
+## Launch-video / promo workflow
+
+When the user asks for a launch video, ad, or promo (often: *"create a launch video for X"*), present both paths before doing the work:
+
+1. **Canvas-first** — draft individual visual frames in the canvas tab (HTML / Paper.js / Matter.js / GPT image 2), let the user review and tweak each, then render selected frames to images/clips and assemble on the timeline. Best when the brand look is unfamiliar or the user wants iteration.
+2. **End-to-end** — research the brand (Rule 5), design directly in Remotion compositions, render full clips, drop on the timeline. Best when speed matters and the brand is well-defined.
+
+If the user has opted into autonomous mode ("you decide", "auto"), pick: **canvas-first when the brand is novel or the prompt is loose; end-to-end when the user gave clear direction and a known brand**. Tell them what you chose in one sentence.
 `
 }
 
@@ -472,7 +516,20 @@ engine.gravity.y = 1;
 | \`Runner.run\` requires two args: \`Runner.run(Runner.create(), engine)\` | 0.20.0 requirement |
 | Always \`document.querySelector('canvas')\` | The iframe has exactly one canvas |
 
-## Option 3 — GPT image 2 (AI-generated image)
+## Option 3 — HTML / CSS frame (\`canvas-run-html\`)
+
+Use \`html\` mode when the user wants pixel-accurate UI mockups, marketing layouts, brand-style cards, gradients, web typography, or anything you'd otherwise build as a web page. The frame is a sandboxed iframe — full HTML/CSS, no app JS access.
+
+\`\`\`bash
+editorctl canvas-add-frame "Brand Card" 1080 1080 html
+editorctl canvas-run-html <frameId> "$(cat scene.html)"
+\`\`\`
+
+Reach for HTML when the user references a real-world web brand (*"a Linear-style task card"*, *"Spotify now-playing UI"*, *"Stripe pricing page"*) — first follow the brand rule (Rule 5) to fetch real tokens, then write the HTML.
+
+## Option 4 — GPT image 2 (AI-generated image)
+
+> Note: Options 1–3 above are the THREE drawing surfaces. GPT image 2 is the fourth canvas creation path but it produces an *image asset*, not a script-driven frame.
 
 \`\`\`bash
 editorctl generate-image "<prompt>" [size] [quality] [background] [format]
@@ -481,6 +538,17 @@ editorctl edit-image "<prompt>" <input1> [input2...] [size=...] [mask=<assetId|p
 # Then add the result to the canvas:
 editorctl canvas-add-image <pathReturnedAbove>
 \`\`\`
+
+## Picking the right canvas surface
+
+| Use… | When the user wants… | Strengths | Weak at |
+|---|---|---|---|
+| **HTML / CSS** | Brand UI mocks, web-style layouts, real fonts, CSS animations, Linear/Spotify/Stripe-style cards | Real fonts, gradients, exact brand replication, easy responsive | Custom drawing, particles, physics |
+| **Paper.js** | Logos, generative art, vector illustrations, custom drawing, hit-testing | Crisp vectors, paths/booleans, deterministic strokes | Realistic physics, complex layout |
+| **Matter.js** | Bouncing, falling objects, chains, springs, gravity, sims | Real physics with collisions and constraints | Fine typography, exact mockups |
+| **GPT image 2** | Photorealistic stills, mood boards, hero shots | Photorealism, style flexibility | Animation, editable shapes |
+
+If the user's prompt is ambiguous (just *"design something cool for X"*), **ask which surface** unless they've opted into autonomous mode — then make the call yourself based on the table and tell them what you picked in one sentence.
 
 ## HTTP bridge fallback
 

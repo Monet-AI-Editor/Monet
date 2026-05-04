@@ -1699,6 +1699,16 @@ export class APIBridge {
         return seq
       }
 
+      case 'delete_sequence': {
+        if (!args.sequenceId) throw new Error('sequenceId required')
+        const result = this.projectStore.deleteSequence(String(args.sequenceId))
+        if (result.activeSequenceId) {
+          this.controlStateService.update({ activeSequenceId: result.activeSequenceId })
+        }
+        this.pushProjectUpdate()
+        return result
+      }
+
       case 'activate_sequence': {
         if (!args.sequenceId) throw new Error('sequenceId required')
         const seq = this.projectStore.activateSequence(args.sequenceId)

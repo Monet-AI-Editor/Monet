@@ -415,6 +415,24 @@ export class ProjectStore {
     return structuredClone(activeSequence)
   }
 
+  deleteSequence(sequenceId: string): { deletedId: string; activeSequenceId: string | null } {
+    const target = this.project.sequences.find((item) => item.id === sequenceId)
+    if (!target) throw new Error('Sequence not found.')
+    if (this.project.sequences.length <= 1) {
+      throw new Error('Cannot delete the only sequence in the project.')
+    }
+    const wasActive = target.active
+    this.captureHistory()
+    this.project.sequences = this.project.sequences.filter((item) => item.id !== sequenceId)
+    if (wasActive && this.project.sequences[0]) {
+      this.project.sequences = this.project.sequences.map((item, idx) => ({ ...item, active: idx === 0 }))
+    }
+    this.normalizeProject()
+    this.touch()
+    const newActive = this.project.sequences.find((item) => item.active) ?? null
+    return { deletedId: sequenceId, activeSequenceId: newActive?.id ?? null }
+  }
+
   addTrack(kind: TimelineTrackRecord['kind']): SequenceRecord {
     this.captureHistory()
     const sequence = this.getActiveSequenceMutable()

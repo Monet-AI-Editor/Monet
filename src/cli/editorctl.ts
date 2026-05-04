@@ -238,6 +238,8 @@ COMMANDS:
 
   create-sequence <name> [width] [height]
                           Create a new sequence and activate it
+  delete-sequence <sequenceId>
+                          Delete a sequence (cannot delete the only one)
   undo                    Undo the last project change
   redo                    Redo the last undone change
 
@@ -579,6 +581,18 @@ async function main(): Promise<void> {
             width: widthStr ? Number(widthStr) : undefined,
             height: heightStr ? Number(heightStr) : undefined
           })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'delete-sequence': {
+          const [, sequenceId] = args
+          if (!sequenceId) {
+            console.error('Usage: editorctl delete-sequence <sequenceId>')
+            console.error('  Cannot delete the only sequence in a project.')
+            process.exit(1)
+          }
+          const result = await callLiveApp('delete_sequence', { sequenceId })
           console.log(JSON.stringify(result, null, 2))
           return
         }
