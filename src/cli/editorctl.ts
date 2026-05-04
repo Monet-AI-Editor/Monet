@@ -240,6 +240,9 @@ COMMANDS:
                           Create a new sequence and activate it
   delete-sequence <sequenceId>
                           Delete a sequence (cannot delete the only one)
+  remove-asset <assetId> [--delete-file]
+                          Remove an asset from the project (and its clips). Pass --delete-file
+                          to also unlink the file on disk.
   undo                    Undo the last project change
   redo                    Redo the last undone change
 
@@ -593,6 +596,19 @@ async function main(): Promise<void> {
             process.exit(1)
           }
           const result = await callLiveApp('delete_sequence', { sequenceId })
+          console.log(JSON.stringify(result, null, 2))
+          return
+        }
+
+        case 'remove-asset':
+        case 'delete-asset': {
+          const [, assetId, ...flags] = args
+          if (!assetId) {
+            console.error('Usage: editorctl remove-asset <assetId> [--delete-file]')
+            process.exit(1)
+          }
+          const deleteFile = flags.includes('--delete-file')
+          const result = await callLiveApp('remove_asset', { assetId, deleteFile })
           console.log(JSON.stringify(result, null, 2))
           return
         }

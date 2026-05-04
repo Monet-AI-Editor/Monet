@@ -1707,6 +1707,29 @@ export class APIBridge {
         return result
       }
 
+      case 'remove_asset':
+      case 'delete_asset': {
+        if (!args.assetId) throw new Error('assetId required')
+        const assetId = String(args.assetId)
+        const asset = this.projectStore.snapshot().assets.find((a) => a.id === assetId)
+        if (!asset) throw new Error(`Asset not found: ${assetId}`)
+        const deleteFile = args.deleteFile === true || args.deleteFile === 'true'
+        const filePath = asset.path
+        this.projectStore.removeAsset(assetId)
+        let fileDeleted = false
+        if (deleteFile && filePath) {
+          try {
+            const { unlink } = await import('fs/promises')
+            await unlink(filePath)
+            fileDeleted = true
+          } catch (err) {
+            console.warn('[api-bridge] Failed to delete asset file:', err)
+          }
+        }
+        this.pushProjectUpdate()
+        return { ok: true, assetId, fileDeleted, path: filePath ?? null }
+      }
+
       case 'activate_sequence': {
         if (!args.sequenceId) throw new Error('sequenceId required')
         const seq = this.projectStore.activateSequence(args.sequenceId)
