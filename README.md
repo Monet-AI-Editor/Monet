@@ -21,16 +21,6 @@
   <code>curl -fsSL https://raw.githubusercontent.com/Monet-AI-Editor/Monet/main/install.sh | bash</code>
 </p>
 
-## Star History
-
-<a href="https://www.star-history.com/">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Monet-AI-Editor/Monet&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Monet-AI-Editor/Monet&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Monet-AI-Editor/Monet&type=date&legend=top-left" />
- </picture>
-</a>
-
 ## What Monet Is
 
 Monet is a desktop video editor designed for people who want coding agents to work on video directly, not through a fragile bridge into another editor.
